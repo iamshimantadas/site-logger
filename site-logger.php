@@ -20,17 +20,6 @@ define('SITE_LOGGER_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('SITE_LOGGER_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('SITE_LOGGER_PLUGIN_BASENAME', plugin_basename(__FILE__));
 
-// Include background processing library
-// if (!class_exists('WP_Async_Request')) {
-//     require_once SITE_LOGGER_PLUGIN_DIR . 'vendor/wp-background-processing/wp-async-request.php';
-// }
-
-// if (!class_exists('WP_Background_Process')) {
-//     require_once SITE_LOGGER_PLUGIN_DIR . 'vendor/wp-background-processing/wp-background-process.php';
-// }
-
- require_once SITE_LOGGER_PLUGIN_DIR . 'vendor/wp-background-processing/wp-background-processing.php';
-
 // Include plugin classes
 require_once SITE_LOGGER_PLUGIN_DIR . 'includes/class-site-logger.php';
 require_once SITE_LOGGER_PLUGIN_DIR . 'includes/class-site-logger-hooks.php';

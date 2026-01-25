@@ -396,6 +396,7 @@ class Site_Logger {
                                         <?php echo esc_html(ucfirst($level)); ?>
                                     </option>
                                 <?php endforeach; ?>
+                                </option>
                             </select>
                         </div>
                         
@@ -504,17 +505,41 @@ class Site_Logger {
                                         <code><?php echo esc_html(self::format_action($log->action)); ?></code>
                                     </td>
                                     <td>
-                                        <?php if ($log->object_id && $log->object_type === 'post'): ?>
-                                            <a href="<?php echo get_edit_post_link($log->object_id); ?>">
-                                                <?php echo esc_html($log->object_name ?: __('Post', 'site-logger') . ' #' . $log->object_id); ?>
-                                            </a>
-                                        <?php elseif ($log->object_id && $log->object_type === 'user'): ?>
-                                            <a href="<?php echo get_edit_user_link($log->object_id); ?>">
-                                                <?php echo esc_html($log->object_name ?: __('User', 'site-logger') . ' #' . $log->object_id); ?>
-                                            </a>
-                                        <?php else: ?>
-                                            <?php echo esc_html($log->object_name ?: ($log->object_type ?: '—')); ?>
-                                        <?php endif; ?>
+                                        <?php 
+                                        $object_text = '';
+                                        if ($log->object_id > 0) {
+                                            if ($log->object_type === 'post') {
+                                                $object_text = '📝 Post #' . $log->object_id;
+                                            } elseif ($log->object_type === 'user') {
+                                                $object_text = '👤 User #' . $log->object_id;
+                                            } elseif ($log->object_type === 'attachment') {
+                                                $object_text = '🖼️ Media #' . $log->object_id;
+                                            } elseif ($log->object_type === 'comment') {
+                                                $object_text = '💬 Comment #' . $log->object_id;
+                                            } elseif ($log->object_type === 'term') {
+                                                $object_text = '🏷️ Term #' . $log->object_id;
+                                            } elseif ($log->object_type === 'revision') {
+                                                $object_text = '📚 Revision #' . $log->object_id;
+                                            } else {
+                                                $object_text = ucfirst($log->object_type) . ' #' . $log->object_id;
+                                            }
+                                        } else {
+                                            if ($log->object_type === 'plugin') {
+                                                $object_text = '🔌 ' . $log->object_name;
+                                            } elseif ($log->object_type === 'theme') {
+                                                $object_text = '🎨 ' . $log->object_name;
+                                            } elseif ($log->object_type === 'option') {
+                                                $object_text = '⚙️ ' . $log->object_name;
+                                            } elseif ($log->object_type === 'widget') {
+                                                $object_text = '🧩 ' . $log->object_name;
+                                            } elseif ($log->object_type === 'acf') {
+                                                $object_text = '🔧 ' . $log->object_name;
+                                            } else {
+                                                $object_text = $log->object_name ?: ucfirst($log->object_type ?: 'System');
+                                            }
+                                        }
+                                        echo esc_html($object_text);
+                                        ?>
                                     </td>
                                     <td>
                                         <?php if ($details): ?>
@@ -557,11 +582,17 @@ class Site_Logger {
         .log-details {
             font-size: 12px;
             line-height: 1.4;
+            max-height: 150px;
+            overflow-y: auto;
+            padding: 8px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            border-left: 3px solid #2271b1;
         }
         .detail-item {
-            margin-bottom: 4px;
-            padding-bottom: 4px;
-            border-bottom: 1px solid #f0f0f1;
+            margin-bottom: 6px;
+            padding-bottom: 6px;
+            border-bottom: 1px dashed #e0e0e0;
         }
         .detail-item:last-child {
             border-bottom: none;
@@ -571,20 +602,40 @@ class Site_Logger {
             font-weight: 600;
             color: #1d2327;
             display: inline-block;
-            min-width: 100px;
+            min-width: 120px;
+            background: #fff;
+            padding: 2px 6px;
+            border-radius: 3px;
+            border: 1px solid #dcdcde;
         }
         .change-old {
             color: #d63638;
+            background: #fcf0f1;
+            padding: 1px 4px;
+            border-radius: 2px;
             text-decoration: line-through;
-            margin-right: 5px;
+            margin-right: 4px;
         }
         .change-new {
             color: #00a32a;
+            background: #f0f9f1;
+            padding: 1px 4px;
+            border-radius: 2px;
             font-weight: 600;
         }
         .change-arrow {
             color: #8c8f94;
-            margin: 0 5px;
+            margin: 0 8px;
+            font-weight: bold;
+        }
+        
+        /* Make table more readable */
+        .wp-list-table th {
+            font-weight: 600;
+            background: #f6f7f7;
+        }
+        .wp-list-table tr:hover {
+            background: #f6f7f7 !important;
         }
         </style>
         <?php
@@ -599,100 +650,156 @@ class Site_Logger {
     /**
      * Format action for display
      */
-    /**
- * Format action for display
- */
-private static function format_action($action) {
-    $actions = [
-        'post_created' => '📝 Post Created',
-        'post_updated' => '✏️ Post Updated',
-        'post_deleted' => '🗑️ Post Deleted',
-        'post_trashed' => '🗑️ Post Trashed',
-        'post_untrashed' => '↩️ Post Restored',
-        'revision_created' => '📚 Revision Created',
-        'user_registered' => '👤 User Registered',
-        'user_updated' => '✏️ User Updated',
-        'user_login' => '🔐 User Login',
-        'user_logout' => '🔓 User Logout',
-        'option_updated' => '⚙️ Setting Updated',
-        'plugin_activated' => '🔌 Plugin Activated',
-        'plugin_deactivated' => '🔌 Plugin Deactivated',
-        'theme_switched' => '🎨 Theme Switched',
-        'comment_posted' => '💬 Comment Posted',
-        'comment_edited' => '✏️ Comment Edited',
-        'comment_deleted' => '🗑️ Comment Deleted',
-        'media_added' => '🖼️ Media Added',
-        'media_edited' => '✏️ Media Edited',
-        'media_deleted' => '🗑️ Media Deleted',
-        'term_created' => '🏷️ Term Created',
-        'term_updated' => '✏️ Term Updated',
-        'term_deleted' => '🗑️ Term Deleted',
-        'widget_updated' => '🧩 Widget Updated',
-        'widgets_rearranged' => '🧩 Widgets Rearranged',
-    ];
+    private static function format_action($action) {
+        $actions = [
+            'post_created' => '📝 Post Created',
+            'post_updated' => '✏️ Post Updated',
+            'post_deleted' => '🗑️ Post Deleted',
+            'post_trashed' => '🗑️ Post Trashed',
+            'post_untrashed' => '↩️ Post Restored',
+            'featured_image_added' => '🖼️ Featured Image Added',
+            'featured_image_changed' => '🖼️ Featured Image Changed',
+            'featured_image_removed' => '🖼️ Featured Image Removed',
+            'revision_created' => '📚 Revision Created',
+            'user_registered' => '👤 User Registered',
+            'user_updated' => '✏️ User Updated',
+            'user_login' => '🔐 User Login',
+            'user_logout' => '🔓 User Logout',
+            'password_reset' => '🔑 Password Reset',
+            'password_changed' => '🔑 Password Changed',
+            'password_reset_requested' => '🔑 Password Reset Requested',
+            'user_role_changed' => '👑 User Role Changed',
+            'user_meta_updated' => '👤 User Meta Updated',
+            'user_meta_added' => '👤 User Meta Added',
+            'user_meta_deleted' => '👤 User Meta Deleted',
+            'option_updated' => '⚙️ Setting Updated',
+            'plugin_activated' => '🔌 Plugin Activated',
+            'plugin_deactivated' => '🔌 Plugin Deactivated',
+            'plugin_deleted' => '🔌 Plugin Deleted',
+            'theme_switched' => '🎨 Theme Switched',
+            'comment_posted' => '💬 Comment Posted',
+            'comment_edited' => '✏️ Comment Edited',
+            'comment_deleted' => '🗑️ Comment Deleted',
+            'media_added' => '🖼️ Media Added',
+            'media_edited' => '✏️ Media Edited',
+            'media_deleted' => '🗑️ Media Deleted',
+            'term_created' => '🏷️ Term Created',
+            'term_updated' => '✏️ Term Updated',
+            'term_deleted' => '🗑️ Term Deleted',
+            'taxonomy_updated' => '🏷️ Taxonomy Updated',
+            'widget_updated' => '🧩 Widget Updated',
+            'widgets_rearranged' => '🧩 Widgets Rearranged',
+            'import_started' => '📥 Import Started',
+            'import_completed' => '📥 Import Completed',
+            'export_started' => '📤 Export Started',
+            'acf_fields_updated' => '🔧 ACF Fields Updated',
+            'acf_field_group_updated' => '🔧 ACF Field Group Updated',
+            'acf_field_group_duplicated' => '🔧 ACF Field Group Duplicated',
+            'acf_field_group_deleted' => '🔧 ACF Field Group Deleted',
+        ];
+        
+        return $actions[$action] ?? ucwords(str_replace('_', ' ', $action));
+    }
     
-    return $actions[$action] ?? ucwords(str_replace('_', ' ', $action));
-}
+    /**
+     * Get object display text for CSV
+     */
+    private static function get_object_display_text($log) {
+        if ($log->object_id > 0) {
+            if ($log->object_type === 'post') {
+                return 'Post #' . $log->object_id . ' - ' . $log->object_name;
+            } elseif ($log->object_type === 'user') {
+                return 'User #' . $log->object_id . ' - ' . $log->object_name;
+            } elseif ($log->object_type === 'attachment') {
+                return 'Media #' . $log->object_id . ' - ' . $log->object_name;
+            } else {
+                return ucfirst($log->object_type) . ' #' . $log->object_id . ' - ' . $log->object_name;
+            }
+        } else {
+            return $log->object_name ?: ucfirst($log->object_type ?: 'System');
+        }
+    }
     
     /**
      * Format details for display
      */
-    /**
- * Format details for display
- */
-private static function format_details_display($details) {
-    if (empty($details) || !is_array($details)) {
-        return '<em>' . __('No details', 'site-logger') . '</em>';
-    }
-    
-    $output = '<div class="log-details">';
-    
-    foreach ($details as $key => $value) {
-        $output .= '<div class="detail-item">';
-        $output .= '<span class="detail-key">' . esc_html(ucfirst(str_replace('_', ' ', $key))) . ':</span> ';
+    private static function format_details_display($details) {
+        if (empty($details) || !is_array($details)) {
+            return '<em>' . __('No details', 'site-logger') . '</em>';
+        }
         
-        if ($key === 'view_revisions' && strpos($value, '<a ') !== false) {
-            // Allow HTML for revision links
-            $output .= $value;
-        } elseif (is_array($value)) {
-            if (isset($value['old']) && isset($value['new'])) {
-                // Before/after change
-                $output .= '<span class="change-old">"' . esc_html($value['old']) . '"</span>';
-                $output .= '<span class="change-arrow"> → </span>';
-                $output .= '<span class="change-new">"' . esc_html($value['new']) . '"</span>';
-            } elseif (isset($value['added']) || isset($value['removed'])) {
-                // Array changes
-                if (!empty($value['added'])) {
-                    $output .= '<span class="change-new">➕ Added: ' . esc_html(is_array($value['added']) ? implode(', ', $value['added']) : $value['added']) . '</span>';
-                }
-                if (!empty($value['removed'])) {
-                    if (!empty($value['added'])) $output .= '<br>';
-                    $output .= '<span class="change-old">➖ Removed: ' . esc_html(is_array($value['removed']) ? implode(', ', $value['removed']) : $value['removed']) . '</span>';
-                }
-            } elseif (!empty($value)) {
-                $output .= '<span class="detail-value">' . esc_html(json_encode($value, JSON_UNESCAPED_UNICODE)) . '</span>';
+        $output = '<div class="log-details">';
+        
+        foreach ($details as $key => $value) {
+            if ($key === 'edit_post' || $key === 'view_post' || $key === 'visit_user' || 
+                $key === 'edit_user' || $key === 'settings_page' || $key === 'view_revisions' || 
+                $key === 'view_media' || $key === 'plugin_details' || $key === 'edit_term') {
+                continue; // Skip these as they'll be added separately
             }
-        } elseif (is_string($value)) {
-            // Check for special strings
-            if (strpos($value, 'Content updated') !== false) {
-                $output .= '<span class="detail-value">📝 ' . esc_html($value) . '</span>';
-            } elseif (strpos($value, 'featured image') !== false) {
-                $output .= '<span class="detail-value">🖼️ ' . esc_html($value) . '</span>';
-            } elseif (strpos($value, 'Updated:') !== false) {
-                $output .= '<span class="detail-value">🔧 ' . esc_html($value) . '</span>';
-            } elseif (strpos($value, 'Set to:') !== false) {
-                $output .= '<span class="detail-value">🏷️ ' . esc_html($value) . '</span>';
-            } else {
-                $output .= '<span class="detail-value">' . esc_html($value) . '</span>';
+            
+            $output .= '<div class="detail-item">';
+            $output .= '<span class="detail-key">' . esc_html(ucfirst(str_replace('_', ' ', $key))) . ':</span> ';
+            
+            if (is_array($value)) {
+                if (isset($value['old']) && isset($value['new'])) {
+                    // Before/after change
+                    $output .= '<span class="change-old">"' . esc_html($value['old']) . '"</span>';
+                    $output .= '<span class="change-arrow"> → </span>';
+                    $output .= '<span class="change-new">"' . esc_html($value['new']) . '"</span>';
+                } elseif (isset($value['added']) || isset($value['removed'])) {
+                    // Array changes
+                    if (!empty($value['added'])) {
+                        $added_items = is_array($value['added']) ? implode(', ', $value['added']) : $value['added'];
+                        $output .= '<span class="change-new">➕ Added: ' . esc_html($added_items) . '</span>';
+                    }
+                    if (!empty($value['removed'])) {
+                        if (!empty($value['added'])) $output .= '<br>';
+                        $removed_items = is_array($value['removed']) ? implode(', ', $value['removed']) : $value['removed'];
+                        $output .= '<span class="change-old">➖ Removed: ' . esc_html($removed_items) . '</span>';
+                    }
+                } elseif (!empty($value)) {
+                    $output .= '<span class="detail-value">' . esc_html(json_encode($value, JSON_UNESCAPED_UNICODE)) . '</span>';
+                }
+            } elseif (is_string($value)) {
+                // Check for special strings
+                if (strpos($value, 'Content updated') !== false) {
+                    $output .= '<span class="detail-value">📝 ' . esc_html($value) . '</span>';
+                } elseif (strpos($value, 'featured image') !== false) {
+                    $output .= '<span class="detail-value">🖼️ ' . esc_html($value) . '</span>';
+                } elseif (strpos($value, 'Updated:') !== false) {
+                    $output .= '<span class="detail-value">🔧 ' . esc_html($value) . '</span>';
+                } elseif (strpos($value, 'Set to:') !== false) {
+                    $output .= '<span class="detail-value">🏷️ ' . esc_html($value) . '</span>';
+                } else {
+                    $output .= '<span class="detail-value">' . esc_html($value) . '</span>';
+                }
             }
+            
+            $output .= '</div>';
+        }
+        
+        // Add action links at the end
+        $action_links = '';
+        if (isset($details['view_revisions'])) $action_links .= $details['view_revisions'] . ' ';
+        if (isset($details['edit_post'])) $action_links .= $details['edit_post'] . ' ';
+        if (isset($details['view_post'])) $action_links .= $details['view_post'] . ' ';
+        if (isset($details['visit_user'])) $action_links .= $details['visit_user'] . ' ';
+        if (isset($details['edit_user'])) $action_links .= $details['edit_user'] . ' ';
+        if (isset($details['settings_page'])) $action_links .= $details['settings_page'] . ' ';
+        if (isset($details['view_media'])) $action_links .= $details['view_media'] . ' ';
+        if (isset($details['plugin_details'])) $action_links .= $details['plugin_details'] . ' ';
+        if (isset($details['edit_term'])) $action_links .= $details['edit_term'] . ' ';
+        
+        if ($action_links) {
+            $output .= '<div class="detail-item" style="border-top: 1px solid #dcdcde; padding-top: 8px; margin-top: 8px;">';
+            $output .= '<span class="detail-key">Actions:</span> ';
+            $output .= '<span class="detail-value">' . $action_links . '</span>';
+            $output .= '</div>';
         }
         
         $output .= '</div>';
+        return $output;
     }
-    
-    $output .= '</div>';
-    return $output;
-}
     
     /**
      * Export logs to CSV
@@ -711,8 +818,7 @@ private static function format_details_display($details) {
             'Severity',
             'Action',
             'Object Type',
-            'Object ID',
-            'Object Name',
+            'Object',
             'Details'
         ]);
         
@@ -728,11 +834,22 @@ private static function format_details_display($details) {
                     if (is_array($value)) {
                         if (isset($value['old']) && isset($value['new'])) {
                             $details_text .= $key . ': ' . $value['old'] . ' → ' . $value['new'] . '; ';
+                        } elseif (isset($value['added']) || isset($value['removed'])) {
+                            if (!empty($value['added'])) {
+                                $added = is_array($value['added']) ? implode(', ', $value['added']) : $value['added'];
+                                $details_text .= $key . ' added: ' . $added . '; ';
+                            }
+                            if (!empty($value['removed'])) {
+                                $removed = is_array($value['removed']) ? implode(', ', $value['removed']) : $value['removed'];
+                                $details_text .= $key . ' removed: ' . $removed . '; ';
+                            }
                         } else {
                             $details_text .= $key . ': ' . json_encode($value) . '; ';
                         }
                     } else {
-                        $details_text .= $key . ': ' . $value . '; ';
+                        // Strip HTML tags from details
+                        $clean_value = strip_tags($value);
+                        $details_text .= $key . ': ' . $clean_value . '; ';
                     }
                 }
             }
@@ -744,8 +861,7 @@ private static function format_details_display($details) {
                 ucfirst($log->severity),
                 self::format_action($log->action),
                 $log->object_type,
-                $log->object_id,
-                $log->object_name,
+                self::get_object_display_text($log),
                 trim($details_text)
             ]);
         }
@@ -837,75 +953,52 @@ private static function format_details_display($details) {
                     </button>
                 </p>
             </form>
+            
+            <!-- Database Stats -->
+            <div class="card" style="margin-top: 30px;">
+                <h2 class="title"><?php _e('Database Information', 'site-logger'); ?></h2>
+                <?php
+                global $wpdb;
+                $table_name = $wpdb->prefix . self::TABLE_NAME;
+                $total = $wpdb->get_var("SELECT COUNT(*) FROM $table_name");
+                $today = $wpdb->get_var($wpdb->prepare(
+                    "SELECT COUNT(*) FROM $table_name WHERE DATE(timestamp) = %s",
+                    current_time('Y-m-d')
+                ));
+                ?>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row"><?php _e('Total Logs:', 'site-logger'); ?></th>
+                        <td><?php echo number_format($total); ?></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php _e('Logs Today:', 'site-logger'); ?></th>
+                        <td><?php echo number_format($today); ?></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php _e('Database Table:', 'site-logger'); ?></th>
+                        <td><code><?php echo $table_name; ?></code></td>
+                    </tr>
+                </table>
+                
+                <p class="submit">
+                    <button type="button" class="button button-secondary" onclick="if(confirm('<?php _e('Are you sure you want to clear all logs? This cannot be undone.', 'site-logger'); ?>')) { location.href='<?php echo wp_nonce_url(admin_url('admin.php?page=site-logs-settings&action=clear_logs'), 'clear_logs'); ?>'; }">
+                        <?php _e('Clear All Logs', 'site-logger'); ?>
+                    </button>
+                </p>
+            </div>
         </div>
-        <style>
-            /* Add to your existing CSS in class-site-logger.php */
-.log-details {
-    font-size: 12px;
-    line-height: 1.4;
-    max-height: 150px;
-    overflow-y: auto;
-    padding: 8px;
-    background: #f8f9fa;
-    border-radius: 4px;
-    border-left: 3px solid #2271b1;
-}
-
-.detail-item {
-    margin-bottom: 6px;
-    padding-bottom: 6px;
-    border-bottom: 1px dashed #e0e0e0;
-}
-
-.detail-item:last-child {
-    border-bottom: none;
-    margin-bottom: 0;
-}
-
-.detail-key {
-    font-weight: 600;
-    color: #1d2327;
-    display: inline-block;
-    min-width: 120px;
-    background: #fff;
-    padding: 2px 6px;
-    border-radius: 3px;
-    border: 1px solid #dcdcde;
-}
-
-.change-old {
-    color: #d63638;
-    background: #fcf0f1;
-    padding: 1px 4px;
-    border-radius: 2px;
-    text-decoration: line-through;
-    margin-right: 4px;
-}
-
-.change-new {
-    color: #00a32a;
-    background: #f0f9f1;
-    padding: 1px 4px;
-    border-radius: 2px;
-    font-weight: 600;
-}
-
-.change-arrow {
-    color: #8c8f94;
-    margin: 0 8px;
-    font-weight: bold;
-}
-
-/* Make table more readable */
-.wp-list-table th {
-    font-weight: 600;
-    background: #f6f7f7;
-}
-
-.wp-list-table tr:hover {
-    background: #f6f7f7 !important;
-}
-        </style>
         <?php
+        
+        // Handle clear logs action
+        if (isset($_GET['action']) && $_GET['action'] === 'clear_logs' 
+            && wp_verify_nonce($_GET['_wpnonce'], 'clear_logs')) {
+            global $wpdb;
+            $table_name = $wpdb->prefix . self::TABLE_NAME;
+            $wpdb->query("TRUNCATE TABLE $table_name");
+            
+            echo '<div class="notice notice-success"><p>' . __('All logs have been cleared.', 'site-logger') . '</p></div>';
+            echo '<script>setTimeout(function(){ window.location.href = "' . admin_url('admin.php?page=site-logs-settings') . '"; }, 1500);</script>';
+        }
     }
 }
