@@ -127,7 +127,8 @@ class Site_Logger {
             INDEX idx_timestamp (timestamp),
             INDEX idx_user_id (user_id),
             INDEX idx_severity (severity),
-            INDEX idx_action (action)
+            INDEX idx_action (action),
+            INDEX idx_object_type (object_type)
         ) $charset_collate;";
         
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -156,7 +157,7 @@ class Site_Logger {
         $table_name = $wpdb->prefix . self::TABLE_NAME;
         
         // Format details for readability
-        $formatted_details = $details;
+        $formatted_details = is_array($details) ? $details : [];
         
         $data = [
             'user_id' => get_current_user_id() ?: 0,
@@ -170,7 +171,15 @@ class Site_Logger {
             'timestamp' => current_time('mysql')
         ];
         
-        return $wpdb->insert($table_name, $data);
+        // Insert into database
+        $result = $wpdb->insert($table_name, $data);
+        
+        // Error logging for debugging
+        if (false === $result) {
+            error_log('Site Logger Error: Failed to insert log. Error: ' . $wpdb->last_error);
+        }
+        
+        return $result;
     }
     
     /**
@@ -200,10 +209,32 @@ class Site_Logger {
             $params[] = $filters['action'];
         }
         
+        if (!empty($filters['object_type'])) {
+            $where[] = 'object_type = %s';
+            $params[] = $filters['object_type'];
+        }
+        
+        if (!empty($filters['object_id'])) {
+            $where[] = 'object_id = %d';
+            $params[] = $filters['object_id'];
+        }
+        
+        if (!empty($filters['date_from'])) {
+            $where[] = 'timestamp >= %s';
+            $params[] = $filters['date_from'];
+        }
+        
+        if (!empty($filters['date_to'])) {
+            $where[] = 'timestamp <= %s';
+            $params[] = $filters['date_to'];
+        }
+        
         if (!empty($filters['search'])) {
-            $where[] = '(object_name LIKE %s OR details LIKE %s)';
-            $params[] = '%' . $wpdb->esc_like($filters['search']) . '%';
-            $params[] = '%' . $wpdb->esc_like($filters['search']) . '%';
+            $where[] = '(object_name LIKE %s OR details LIKE %s OR action LIKE %s)';
+            $search_term = '%' . $wpdb->esc_like($filters['search']) . '%';
+            $params[] = $search_term;
+            $params[] = $search_term;
+            $params[] = $search_term;
         }
         
         $where_sql = implode(' AND ', $where);
@@ -218,6 +249,104 @@ class Site_Logger {
         if (!empty($params)) {
             $query = $wpdb->prepare($query, $params);
         }
+        
+        $results = $wpdb->get_results($query);
+        
+        // Decode JSON details for each log
+        foreach ($results as $log) {
+            if (!empty($log->details)) {
+                $log->details = json_decode($log->details, true);
+            }
+        }
+        
+        return $results;
+    }
+    
+    /**
+     * Get logs count with filters
+     */
+    public static function get_logs_count($filters = []) {
+        global $wpdb;
+        
+        $table_name = $wpdb->prefix . self::TABLE_NAME;
+        
+        $where = ['1=1'];
+        $params = [];
+        
+        // Apply filters
+        if (!empty($filters['severity'])) {
+            $where[] = 'severity = %s';
+            $params[] = $filters['severity'];
+        }
+        
+        if (!empty($filters['user_id'])) {
+            $where[] = 'user_id = %d';
+            $params[] = $filters['user_id'];
+        }
+        
+        if (!empty($filters['action'])) {
+            $where[] = 'action = %s';
+            $params[] = $filters['action'];
+        }
+        
+        if (!empty($filters['date_from'])) {
+            $where[] = 'timestamp >= %s';
+            $params[] = $filters['date_from'];
+        }
+        
+        if (!empty($filters['date_to'])) {
+            $where[] = 'timestamp <= %s';
+            $params[] = $filters['date_to'];
+        }
+        
+        $where_sql = implode(' AND ', $where);
+        
+        $query = "SELECT COUNT(*) FROM $table_name WHERE $where_sql";
+        
+        if (!empty($params)) {
+            $query = $wpdb->prepare($query, $params);
+        }
+        
+        return $wpdb->get_var($query);
+    }
+    
+    /**
+     * Get logs grouped by action
+     */
+    public static function get_logs_by_action($limit = 10) {
+        global $wpdb;
+        
+        $table_name = $wpdb->prefix . self::TABLE_NAME;
+        
+        $query = $wpdb->prepare(
+            "SELECT action, COUNT(*) as count 
+             FROM $table_name 
+             GROUP BY action 
+             ORDER BY count DESC 
+             LIMIT %d",
+            $limit
+        );
+        
+        return $wpdb->get_results($query);
+    }
+    
+    /**
+     * Get logs grouped by user
+     */
+    public static function get_logs_by_user($limit = 10) {
+        global $wpdb;
+        
+        $table_name = $wpdb->prefix . self::TABLE_NAME;
+        
+        $query = $wpdb->prepare(
+            "SELECT user_id, COUNT(*) as count 
+             FROM $table_name 
+             WHERE user_id > 0 
+             GROUP BY user_id 
+             ORDER BY count DESC 
+             LIMIT %d",
+            $limit
+        );
         
         return $wpdb->get_results($query);
     }
@@ -239,6 +368,9 @@ class Site_Logger {
                 $date
             )
         );
+        
+        // Optimize table after deletion
+        $wpdb->query("OPTIMIZE TABLE $table_name");
     }
     
     /**
@@ -250,7 +382,8 @@ class Site_Logger {
         if (!empty($_SERVER['HTTP_CLIENT_IP'])) {
             $ip = $_SERVER['HTTP_CLIENT_IP'];
         } elseif (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-            $ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
+            $ip_list = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
+            $ip = trim($ip_list[0]);
         } elseif (!empty($_SERVER['REMOTE_ADDR'])) {
             $ip = $_SERVER['REMOTE_ADDR'];
         }
@@ -274,8 +407,18 @@ class Site_Logger {
                     current_time('Y-m-d')
                 )
             ),
-            'users' => $wpdb->get_var("SELECT COUNT(DISTINCT user_id) FROM $table_name"),
-            'errors' => $wpdb->get_var("SELECT COUNT(*) FROM $table_name WHERE severity IN ('error', 'critical', 'alert', 'emergency')")
+            'yesterday' => $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM $table_name WHERE DATE(timestamp) = %s",
+                    date('Y-m-d', strtotime('-1 day'))
+                )
+            ),
+            'users' => $wpdb->get_var("SELECT COUNT(DISTINCT user_id) FROM $table_name WHERE user_id > 0"),
+            'errors' => $wpdb->get_var("SELECT COUNT(*) FROM $table_name WHERE severity IN ('error', 'critical', 'alert', 'emergency')"),
+            'warnings' => $wpdb->get_var("SELECT COUNT(*) FROM $table_name WHERE severity = 'warning'"),
+            'notices' => $wpdb->get_var("SELECT COUNT(*) FROM $table_name WHERE severity = 'notice'"),
+            'info' => $wpdb->get_var("SELECT COUNT(*) FROM $table_name WHERE severity = 'info'"),
+            'debug' => $wpdb->get_var("SELECT COUNT(*) FROM $table_name WHERE severity = 'debug'")
         ];
     }
     
@@ -321,6 +464,16 @@ class Site_Logger {
             'site-logs-settings',
             [__CLASS__, 'render_settings_page']
         );
+        
+        // Add dashboard submenu
+        add_submenu_page(
+            'site-logs',
+            __('Dashboard', 'site-logger'),
+            __('Dashboard', 'site-logger'),
+            'manage_options',
+            'site-logs-dashboard',
+            [__CLASS__, 'render_dashboard_page']
+        );
     }
     
     /**
@@ -338,6 +491,15 @@ class Site_Logger {
         if (!empty($_GET['action'])) {
             $filters['action'] = sanitize_text_field($_GET['action']);
         }
+        if (!empty($_GET['object_type'])) {
+            $filters['object_type'] = sanitize_text_field($_GET['object_type']);
+        }
+        if (!empty($_GET['date_from'])) {
+            $filters['date_from'] = sanitize_text_field($_GET['date_from']);
+        }
+        if (!empty($_GET['date_to'])) {
+            $filters['date_to'] = sanitize_text_field($_GET['date_to']);
+        }
         if (!empty($_GET['search'])) {
             $filters['search'] = sanitize_text_field($_GET['search']);
         }
@@ -351,6 +513,9 @@ class Site_Logger {
         $table_name = $wpdb->prefix . self::TABLE_NAME;
         $actions = $wpdb->get_col("SELECT DISTINCT action FROM $table_name ORDER BY action");
         
+        // Get unique object types for filter
+        $object_types = $wpdb->get_col("SELECT DISTINCT object_type FROM $table_name WHERE object_type != '' ORDER BY object_type");
+        
         ?>
         <div class="wrap">
             <h1><?php _e('Site Activity Logs', 'site-logger'); ?></h1>
@@ -360,19 +525,23 @@ class Site_Logger {
                 <h2 style="margin-top: 0;"><?php _e('Overview', 'site-logger'); ?></h2>
                 <div style="display: flex; gap: 30px; flex-wrap: wrap;">
                     <div>
-                        <h3 style="margin: 0 0 5px 0; color: #2271b1;"><?php echo esc_html($summary['total']); ?></h3>
+                        <h3 style="margin: 0 0 5px 0; color: #2271b1;"><?php echo esc_html(number_format($summary['total'])); ?></h3>
                         <p style="margin: 0; color: #646970;"><?php _e('Total Logs', 'site-logger'); ?></p>
                     </div>
                     <div>
-                        <h3 style="margin: 0 0 5px 0; color: #00a32a;"><?php echo esc_html($summary['today']); ?></h3>
+                        <h3 style="margin: 0 0 5px 0; color: #00a32a;"><?php echo esc_html(number_format($summary['today'])); ?></h3>
                         <p style="margin: 0; color: #646970;"><?php _e('Today', 'site-logger'); ?></p>
                     </div>
                     <div>
-                        <h3 style="margin: 0 0 5px 0; color: #d63638;"><?php echo esc_html($summary['errors']); ?></h3>
+                        <h3 style="margin: 0 0 5px 0; color: #d63638;"><?php echo esc_html(number_format($summary['errors'])); ?></h3>
                         <p style="margin: 0; color: #646970;"><?php _e('Errors', 'site-logger'); ?></p>
                     </div>
                     <div>
-                        <h3 style="margin: 0 0 5px 0; color: #f0c33c;"><?php echo esc_html($summary['users']); ?></h3>
+                        <h3 style="margin: 0 0 5px 0; color: #ffb900;"><?php echo esc_html(number_format($summary['warnings'])); ?></h3>
+                        <p style="margin: 0; color: #646970;"><?php _e('Warnings', 'site-logger'); ?></p>
+                    </div>
+                    <div>
+                        <h3 style="margin: 0 0 5px 0; color: #f0c33c;"><?php echo esc_html(number_format($summary['users'])); ?></h3>
                         <p style="margin: 0; color: #646970;"><?php _e('Active Users', 'site-logger'); ?></p>
                     </div>
                 </div>
@@ -384,19 +553,18 @@ class Site_Logger {
                 <form method="get" action="">
                     <input type="hidden" name="page" value="site-logs">
                     
-                    <div style="display: flex; gap: 20px; margin-bottom: 15px; flex-wrap: wrap;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 15px;">
                         <div>
                             <label for="severity" style="display: block; margin-bottom: 5px; font-weight: 600;">
                                 <?php _e('Severity:', 'site-logger'); ?>
                             </label>
-                            <select name="severity" id="severity" style="min-width: 150px;">
+                            <select name="severity" id="severity" style="width: 100%;">
                                 <option value=""><?php _e('All Severities', 'site-logger'); ?></option>
                                 <?php foreach (self::SEVERITY_LEVELS as $level): ?>
                                     <option value="<?php echo esc_attr($level); ?>" <?php selected(!empty($filters['severity']) && $filters['severity'] === $level); ?>>
                                         <?php echo esc_html(ucfirst($level)); ?>
                                     </option>
                                 <?php endforeach; ?>
-                                </option>
                             </select>
                         </div>
                         
@@ -410,7 +578,7 @@ class Site_Logger {
                                 'show_option_all' => __('All Users', 'site-logger'),
                                 'selected' => !empty($filters['user_id']) ? $filters['user_id'] : 0,
                                 'include_selected' => true,
-                                'style' => 'min-width: 200px;'
+                                'style' => 'width: 100%;'
                             ]);
                             ?>
                         </div>
@@ -419,7 +587,7 @@ class Site_Logger {
                             <label for="action" style="display: block; margin-bottom: 5px; font-weight: 600;">
                                 <?php _e('Action:', 'site-logger'); ?>
                             </label>
-                            <select name="action" id="action" style="min-width: 200px;">
+                            <select name="action" id="action" style="width: 100%;">
                                 <option value=""><?php _e('All Actions', 'site-logger'); ?></option>
                                 <?php foreach ($actions as $action): ?>
                                     <option value="<?php echo esc_attr($action); ?>" <?php selected(!empty($filters['action']) && $filters['action'] === $action); ?>>
@@ -428,6 +596,38 @@ class Site_Logger {
                                 <?php endforeach; ?>
                             </select>
                         </div>
+                        
+                        <div>
+                            <label for="object_type" style="display: block; margin-bottom: 5px; font-weight: 600;">
+                                <?php _e('Object Type:', 'site-logger'); ?>
+                            </label>
+                            <select name="object_type" id="object_type" style="width: 100%;">
+                                <option value=""><?php _e('All Types', 'site-logger'); ?></option>
+                                <?php foreach ($object_types as $type): ?>
+                                    <option value="<?php echo esc_attr($type); ?>" <?php selected(!empty($filters['object_type']) && $filters['object_type'] === $type); ?>>
+                                        <?php echo esc_html(ucfirst($type)); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label for="date_from" style="display: block; margin-bottom: 5px; font-weight: 600;">
+                                <?php _e('Date From:', 'site-logger'); ?>
+                            </label>
+                            <input type="date" name="date_from" id="date_from" 
+                                   value="<?php echo !empty($filters['date_from']) ? esc_attr($filters['date_from']) : ''; ?>" 
+                                   style="width: 100%;">
+                        </div>
+                        
+                        <div>
+                            <label for="date_to" style="display: block; margin-bottom: 5px; font-weight: 600;">
+                                <?php _e('Date To:', 'site-logger'); ?>
+                            </label>
+                            <input type="date" name="date_to" id="date_to" 
+                                   value="<?php echo !empty($filters['date_to']) ? esc_attr($filters['date_to']) : ''; ?>" 
+                                   style="width: 100%;">
+                        </div>
                     </div>
                     
                     <div style="display: flex; gap: 20px; align-items: flex-end;">
@@ -435,8 +635,10 @@ class Site_Logger {
                             <label for="search" style="display: block; margin-bottom: 5px; font-weight: 600;">
                                 <?php _e('Search:', 'site-logger'); ?>
                             </label>
-                            <input type="text" name="search" id="search" value="<?php echo !empty($filters['search']) ? esc_attr($filters['search']) : ''; ?>" 
-                                   placeholder="<?php esc_attr_e('Search logs...', 'site-logger'); ?>" style="width: 100%;">
+                            <input type="text" name="search" id="search" 
+                                   value="<?php echo !empty($filters['search']) ? esc_attr($filters['search']) : ''; ?>" 
+                                   placeholder="<?php esc_attr_e('Search logs...', 'site-logger'); ?>" 
+                                   style="width: 100%;">
                         </div>
                         
                         <div>
@@ -478,7 +680,7 @@ class Site_Logger {
                                 $username = $user ? $user->display_name : __('System', 'site-logger');
                                 $time = date_i18n('M j, H:i:s', strtotime($log->timestamp));
                                 $time_full = date_i18n('Y-m-d H:i:s', strtotime($log->timestamp));
-                                $details = json_decode($log->details, true);
+                                $details = $log->details;
                                 ?>
                                 <tr>
                                     <td>
@@ -510,8 +712,16 @@ class Site_Logger {
                                         if ($log->object_id > 0) {
                                             if ($log->object_type === 'post') {
                                                 $object_text = '📝 Post #' . $log->object_id;
+                                                $edit_url = get_edit_post_link($log->object_id);
+                                                if ($edit_url) {
+                                                    $object_text = '<a href="' . esc_url($edit_url) . '" target="_blank">📝 Post #' . $log->object_id . '</a>';
+                                                }
                                             } elseif ($log->object_type === 'user') {
                                                 $object_text = '👤 User #' . $log->object_id;
+                                                $edit_url = get_edit_user_link($log->object_id);
+                                                if ($edit_url) {
+                                                    $object_text = '<a href="' . esc_url($edit_url) . '" target="_blank">👤 User #' . $log->object_id . '</a>';
+                                                }
                                             } elseif ($log->object_type === 'attachment') {
                                                 $object_text = '🖼️ Media #' . $log->object_id;
                                             } elseif ($log->object_type === 'comment') {
@@ -538,7 +748,7 @@ class Site_Logger {
                                                 $object_text = $log->object_name ?: ucfirst($log->object_type ?: 'System');
                                             }
                                         }
-                                        echo esc_html($object_text);
+                                        echo $object_text;
                                         ?>
                                     </td>
                                     <td>
@@ -556,7 +766,7 @@ class Site_Logger {
             </div>
             
             <!-- Export Button -->
-            <div style="margin-top: 20px;">
+            <div style="margin-top: 20px; display: flex; gap: 10px;">
                 <form method="post" action="">
                     <?php wp_nonce_field('site_logger_export', 'site_logger_nonce'); ?>
                     <input type="hidden" name="site_logger_action" value="export_csv">
@@ -565,7 +775,55 @@ class Site_Logger {
                         <?php _e('Export to CSV', 'site-logger'); ?>
                     </button>
                 </form>
+                
+                <form method="post" action="">
+                    <?php wp_nonce_field('site_logger_clear', 'site_logger_nonce'); ?>
+                    <input type="hidden" name="site_logger_action" value="clear_logs">
+                    <button type="submit" class="button button-secondary" onclick="return confirm('<?php _e('Are you sure you want to clear all logs? This cannot be undone.', 'site-logger'); ?>');">
+                        <span class="dashicons dashicons-trash" style="vertical-align: middle; margin-right: 5px;"></span>
+                        <?php _e('Clear All Logs', 'site-logger'); ?>
+                    </button>
+                </form>
             </div>
+            
+            <!-- Pagination -->
+            <?php
+            $total_logs = self::get_logs_count($filters);
+            $total_pages = ceil($total_logs / 100);
+            $current_page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
+            
+            if ($total_pages > 1):
+            ?>
+            <div class="tablenav bottom" style="margin-top: 20px;">
+                <div class="tablenav-pages">
+                    <span class="displaying-num"><?php printf(__('%s items', 'site-logger'), number_format($total_logs)); ?></span>
+                    <span class="pagination-links">
+                        <?php
+                        $base_url = admin_url('admin.php?page=site-logs');
+                        foreach ($filters as $key => $value) {
+                            $base_url .= '&' . $key . '=' . urlencode($value);
+                        }
+                        
+                        if ($current_page > 1) {
+                            echo '<a class="prev-page" href="' . $base_url . '&paged=' . ($current_page - 1) . '"><span class="screen-reader-text">' . __('Previous page', 'site-logger') . '</span><span aria-hidden="true">‹</span></a>';
+                        }
+                        
+                        for ($i = 1; $i <= $total_pages; $i++) {
+                            if ($i == $current_page) {
+                                echo '<span class="current-page" aria-current="page">' . $i . '</span>';
+                            } else {
+                                echo '<a class="page-numbers" href="' . $base_url . '&paged=' . $i . '">' . $i . '</a>';
+                            }
+                        }
+                        
+                        if ($current_page < $total_pages) {
+                            echo '<a class="next-page" href="' . $base_url . '&paged=' . ($current_page + 1) . '"><span class="screen-reader-text">' . __('Next page', 'site-logger') . '</span><span aria-hidden="true">›</span></a>';
+                        }
+                        ?>
+                    </span>
+                </div>
+            </div>
+            <?php endif; ?>
         </div>
         
         <style>
@@ -637,6 +895,15 @@ class Site_Logger {
         .wp-list-table tr:hover {
             background: #f6f7f7 !important;
         }
+        
+        /* Responsive table */
+        @media screen and (max-width: 1200px) {
+            .wp-list-table {
+                display: block;
+                overflow-x: auto;
+                white-space: nowrap;
+            }
+        }
         </style>
         <?php
         
@@ -644,6 +911,12 @@ class Site_Logger {
         if (isset($_POST['site_logger_action']) && $_POST['site_logger_action'] === 'export_csv' 
             && wp_verify_nonce($_POST['site_logger_nonce'], 'site_logger_export')) {
             self::export_csv($logs);
+        }
+        
+        // Handle clear logs
+        if (isset($_POST['site_logger_action']) && $_POST['site_logger_action'] === 'clear_logs' 
+            && wp_verify_nonce($_POST['site_logger_nonce'], 'site_logger_clear')) {
+            self::clear_all_logs();
         }
     }
     
@@ -696,6 +969,18 @@ class Site_Logger {
             'acf_field_group_updated' => '🔧 ACF Field Group Updated',
             'acf_field_group_duplicated' => '🔧 ACF Field Group Duplicated',
             'acf_field_group_deleted' => '🔧 ACF Field Group Deleted',
+            'term_meta_updated' => '🏷️ Term Meta Updated',
+            'term_meta_added' => '🏷️ Term Meta Added',
+            'term_meta_deleted' => '🏷️ Term Meta Deleted',
+            'post_meta_updated' => '📝 Post Meta Updated',
+            'post_meta_added' => '📝 Post Meta Added',
+            'post_meta_deleted' => '📝 Post Meta Deleted',
+            'menu_updated' => '📋 Menu Updated',
+            'menu_created' => '📋 Menu Created',
+            'menu_deleted' => '📋 Menu Deleted',
+            'sidebar_widgets_updated' => '🧩 Sidebar Widgets Updated',
+            'customizer_saved' => '🎨 Customizer Saved',
+            'login_failed' => '🔒 Login Failed',
         ];
         
         return $actions[$action] ?? ucwords(str_replace('_', ' ', $action));
@@ -733,7 +1018,8 @@ class Site_Logger {
         foreach ($details as $key => $value) {
             if ($key === 'edit_post' || $key === 'view_post' || $key === 'visit_user' || 
                 $key === 'edit_user' || $key === 'settings_page' || $key === 'view_revisions' || 
-                $key === 'view_media' || $key === 'plugin_details' || $key === 'edit_term') {
+                $key === 'view_media' || $key === 'plugin_details' || $key === 'edit_term' ||
+                $key === 'edit_acf_group') {
                 continue; // Skip these as they'll be added separately
             }
             
@@ -789,6 +1075,7 @@ class Site_Logger {
         if (isset($details['view_media'])) $action_links .= $details['view_media'] . ' ';
         if (isset($details['plugin_details'])) $action_links .= $details['plugin_details'] . ' ';
         if (isset($details['edit_term'])) $action_links .= $details['edit_term'] . ' ';
+        if (isset($details['edit_acf_group'])) $action_links .= $details['edit_acf_group'] . ' ';
         
         if ($action_links) {
             $output .= '<div class="detail-item" style="border-top: 1px solid #dcdcde; padding-top: 8px; margin-top: 8px;">';
@@ -805,20 +1092,26 @@ class Site_Logger {
      * Export logs to CSV
      */
     private static function export_csv($logs) {
-        header('Content-Type: text/csv');
-        header('Content-Disposition: attachment; filename="site-logs-' . date('Y-m-d') . '.csv"');
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="site-logs-' . date('Y-m-d-H-i-s') . '.csv"');
         
         $output = fopen('php://output', 'w');
+        
+        // Add BOM for UTF-8
+        fwrite($output, "\xEF\xBB\xBF");
         
         // Headers
         fputcsv($output, [
             'ID',
             'Timestamp',
+            'User ID',
             'User',
+            'IP Address',
             'Severity',
             'Action',
             'Object Type',
-            'Object',
+            'Object ID',
+            'Object Name',
             'Details'
         ]);
         
@@ -826,10 +1119,10 @@ class Site_Logger {
         foreach ($logs as $log) {
             $user = $log->user_id ? get_user_by('id', $log->user_id) : null;
             $username = $user ? $user->display_name : 'System';
-            $details = json_decode($log->details, true);
+            $details = $log->details;
             $details_text = '';
             
-            if ($details) {
+            if ($details && is_array($details)) {
                 foreach ($details as $key => $value) {
                     if (is_array($value)) {
                         if (isset($value['old']) && isset($value['new'])) {
@@ -857,10 +1150,13 @@ class Site_Logger {
             fputcsv($output, [
                 $log->id,
                 $log->timestamp,
+                $log->user_id,
                 $username,
+                $log->user_ip,
                 ucfirst($log->severity),
                 self::format_action($log->action),
                 $log->object_type,
+                $log->object_id,
                 self::get_object_display_text($log),
                 trim($details_text)
             ]);
@@ -868,6 +1164,22 @@ class Site_Logger {
         
         fclose($output);
         exit;
+    }
+    
+    /**
+     * Clear all logs
+     */
+    private static function clear_all_logs() {
+        global $wpdb;
+        
+        $table_name = $wpdb->prefix . self::TABLE_NAME;
+        $result = $wpdb->query("TRUNCATE TABLE $table_name");
+        
+        if (false !== $result) {
+            echo '<div class="notice notice-success is-dismissible"><p>' . __('All logs have been cleared.', 'site-logger') . '</p></div>';
+        } else {
+            echo '<div class="notice notice-error is-dismissible"><p>' . __('Failed to clear logs. Please try again.', 'site-logger') . '</p></div>';
+        }
     }
     
     /**
@@ -881,8 +1193,10 @@ class Site_Logger {
             update_option('site_logger_severity_level', sanitize_text_field($_POST['severity_level']));
             update_option('site_logger_retention_days', intval($_POST['retention_days']));
             update_option('site_logger_skip_cron', sanitize_text_field($_POST['skip_cron']));
+            update_option('site_logger_log_ip', isset($_POST['log_ip']) ? 'yes' : 'no');
+            update_option('site_logger_log_user_id', isset($_POST['log_user_id']) ? 'yes' : 'no');
             
-            echo '<div class="notice notice-success"><p>' . __('Settings saved successfully.', 'site-logger') . '</p></div>';
+            echo '<div class="notice notice-success is-dismissible"><p>' . __('Settings saved successfully.', 'site-logger') . '</p></div>';
         }
         
         ?>
@@ -892,6 +1206,7 @@ class Site_Logger {
             <form method="post" action="">
                 <?php wp_nonce_field('site_logger_save_settings', 'site_logger_settings_nonce'); ?>
                 
+                <h2><?php _e('Logging Settings', 'site-logger'); ?></h2>
                 <table class="form-table">
                     <tr>
                         <th scope="row">
@@ -945,6 +1260,38 @@ class Site_Logger {
                             </p>
                         </td>
                     </tr>
+                    
+                    <tr>
+                        <th scope="row">
+                            <label for="log_ip"><?php _e('Log IP Addresses', 'site-logger'); ?></label>
+                        </th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="log_ip" id="log_ip" value="yes" 
+                                       <?php checked(get_option('site_logger_log_ip', 'yes'), 'yes'); ?>>
+                                <?php _e('Log user IP addresses', 'site-logger'); ?>
+                            </label>
+                            <p class="description">
+                                <?php _e('Disable this for GDPR compliance if needed.', 'site-logger'); ?>
+                            </p>
+                        </td>
+                    </tr>
+                    
+                    <tr>
+                        <th scope="row">
+                            <label for="log_user_id"><?php _e('Log User IDs', 'site-logger'); ?></label>
+                        </th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="log_user_id" id="log_user_id" value="yes" 
+                                       <?php checked(get_option('site_logger_log_user_id', 'yes'), 'yes'); ?>>
+                                <?php _e('Log user IDs', 'site-logger'); ?>
+                            </label>
+                            <p class="description">
+                                <?php _e('Disable this for additional privacy.', 'site-logger'); ?>
+                            </p>
+                        </td>
+                    </tr>
                 </table>
                 
                 <p class="submit">
@@ -965,6 +1312,11 @@ class Site_Logger {
                     "SELECT COUNT(*) FROM $table_name WHERE DATE(timestamp) = %s",
                     current_time('Y-m-d')
                 ));
+                $yesterday = $wpdb->get_var($wpdb->prepare(
+                    "SELECT COUNT(*) FROM $table_name WHERE DATE(timestamp) = %s",
+                    date('Y-m-d', strtotime('-1 day'))
+                ));
+                $table_size = $wpdb->get_var("SELECT ROUND(((data_length + index_length) / 1024 / 1024), 2) FROM information_schema.TABLES WHERE table_schema = DATABASE() AND table_name = '$table_name'");
                 ?>
                 <table class="form-table">
                     <tr>
@@ -976,29 +1328,293 @@ class Site_Logger {
                         <td><?php echo number_format($today); ?></td>
                     </tr>
                     <tr>
+                        <th scope="row"><?php _e('Logs Yesterday:', 'site-logger'); ?></th>
+                        <td><?php echo number_format($yesterday); ?></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php _e('Table Size:', 'site-logger'); ?></th>
+                        <td><?php echo $table_size ? $table_size . ' MB' : __('Unknown', 'site-logger'); ?></td>
+                    </tr>
+                    <tr>
                         <th scope="row"><?php _e('Database Table:', 'site-logger'); ?></th>
                         <td><code><?php echo $table_name; ?></code></td>
                     </tr>
                 </table>
                 
                 <p class="submit">
-                    <button type="button" class="button button-secondary" onclick="if(confirm('<?php _e('Are you sure you want to clear all logs? This cannot be undone.', 'site-logger'); ?>')) { location.href='<?php echo wp_nonce_url(admin_url('admin.php?page=site-logs-settings&action=clear_logs'), 'clear_logs'); ?>'; }">
-                        <?php _e('Clear All Logs', 'site-logger'); ?>
-                    </button>
+                    <form method="post" action="" onsubmit="return confirm('<?php _e('Are you sure you want to clear all logs? This cannot be undone.', 'site-logger'); ?>');">
+                        <?php wp_nonce_field('site_logger_clear_settings', 'site_logger_nonce'); ?>
+                        <input type="hidden" name="site_logger_action" value="clear_all_logs">
+                        <button type="submit" class="button button-secondary">
+                            <?php _e('Clear All Logs', 'site-logger'); ?>
+                        </button>
+                    </form>
                 </p>
+            </div>
+            
+            <!-- System Information -->
+            <div class="card" style="margin-top: 30px;">
+                <h2 class="title"><?php _e('System Information', 'site-logger'); ?></h2>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row"><?php _e('WordPress Version:', 'site-logger'); ?></th>
+                        <td><?php echo esc_html(get_bloginfo('version')); ?></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php _e('PHP Version:', 'site-logger'); ?></th>
+                        <td><?php echo esc_html(phpversion()); ?></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php _e('MySQL Version:', 'site-logger'); ?></th>
+                        <td><?php echo esc_html($wpdb->db_version()); ?></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php _e('Plugin Version:', 'site-logger'); ?></th>
+                        <td><?php echo esc_html(SITE_LOGGER_VERSION); ?></td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php _e('Site URL:', 'site-logger'); ?></th>
+                        <td><?php echo esc_html(get_site_url()); ?></td>
+                    </tr>
+                </table>
             </div>
         </div>
         <?php
         
         // Handle clear logs action
-        if (isset($_GET['action']) && $_GET['action'] === 'clear_logs' 
-            && wp_verify_nonce($_GET['_wpnonce'], 'clear_logs')) {
-            global $wpdb;
-            $table_name = $wpdb->prefix . self::TABLE_NAME;
-            $wpdb->query("TRUNCATE TABLE $table_name");
-            
-            echo '<div class="notice notice-success"><p>' . __('All logs have been cleared.', 'site-logger') . '</p></div>';
+        if (isset($_POST['site_logger_action']) && $_POST['site_logger_action'] === 'clear_all_logs' 
+            && wp_verify_nonce($_POST['site_logger_nonce'], 'site_logger_clear_settings')) {
+            self::clear_all_logs();
             echo '<script>setTimeout(function(){ window.location.href = "' . admin_url('admin.php?page=site-logs-settings') . '"; }, 1500);</script>';
         }
+    }
+    
+    /**
+     * Render dashboard page
+     */
+    public static function render_dashboard_page() {
+        $summary = self::get_summary();
+        $logs_by_action = self::get_logs_by_action(10);
+        $logs_by_user = self::get_logs_by_user(10);
+        
+        ?>
+        <div class="wrap">
+            <h1><?php _e('Site Logger Dashboard', 'site-logger'); ?></h1>
+            
+            <!-- Summary Cards -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 20px 0;">
+                <div style="background: #fff; padding: 20px; border-radius: 4px; border-left: 4px solid #2271b1;">
+                    <h3 style="margin: 0 0 10px 0; color: #2271b1;"><?php echo number_format($summary['total']); ?></h3>
+                    <p style="margin: 0; color: #646970; font-size: 14px;"><?php _e('Total Logs', 'site-logger'); ?></p>
+                </div>
+                
+                <div style="background: #fff; padding: 20px; border-radius: 4px; border-left: 4px solid #00a32a;">
+                    <h3 style="margin: 0 0 10px 0; color: #00a32a;"><?php echo number_format($summary['today']); ?></h3>
+                    <p style="margin: 0; color: #646970; font-size: 14px;"><?php _e('Today', 'site-logger'); ?></p>
+                </div>
+                
+                <div style="background: #fff; padding: 20px; border-radius: 4px; border-left: 4px solid #d63638;">
+                    <h3 style="margin: 0 0 10px 0; color: #d63638;"><?php echo number_format($summary['errors']); ?></h3>
+                    <p style="margin: 0; color: #646970; font-size: 14px;"><?php _e('Errors', 'site-logger'); ?></p>
+                </div>
+                
+                <div style="background: #fff; padding: 20px; border-radius: 4px; border-left: 4px solid #ffb900;">
+                    <h3 style="margin: 0 0 10px 0; color: #ffb900;"><?php echo number_format($summary['warnings']); ?></h3>
+                    <p style="margin: 0; color: #646970; font-size: 14px;"><?php _e('Warnings', 'site-logger'); ?></p>
+                </div>
+                
+                <div style="background: #fff; padding: 20px; border-radius: 4px; border-left: 4px solid #f0c33c;">
+                    <h3 style="margin: 0 0 10px 0; color: #f0c33c;"><?php echo number_format($summary['users']); ?></h3>
+                    <p style="margin: 0; color: #646970; font-size: 14px;"><?php _e('Active Users', 'site-logger'); ?></p>
+                </div>
+            </div>
+            
+            <!-- Charts and Stats -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0;">
+                <!-- Top Actions -->
+                <div style="background: #fff; padding: 20px; border-radius: 4px;">
+                    <h3 style="margin-top: 0;"><?php _e('Top Actions', 'site-logger'); ?></h3>
+                    <table class="wp-list-table widefat fixed striped">
+                        <thead>
+                            <tr>
+                                <th><?php _e('Action', 'site-logger'); ?></th>
+                                <th><?php _e('Count', 'site-logger'); ?></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (empty($logs_by_action)): ?>
+                                <tr>
+                                    <td colspan="2" style="text-align: center; padding: 10px;">
+                                        <?php _e('No data available', 'site-logger'); ?>
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($logs_by_action as $action): ?>
+                                    <tr>
+                                        <td><?php echo esc_html(self::format_action($action->action)); ?></td>
+                                        <td><?php echo number_format($action->count); ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Top Users -->
+                <div style="background: #fff; padding: 20px; border-radius: 4px;">
+                    <h3 style="margin-top: 0;"><?php _e('Top Users', 'site-logger'); ?></h3>
+                    <table class="wp-list-table widefat fixed striped">
+                        <thead>
+                            <tr>
+                                <th><?php _e('User', 'site-logger'); ?></th>
+                                <th><?php _e('Activity Count', 'site-logger'); ?></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (empty($logs_by_user)): ?>
+                                <tr>
+                                    <td colspan="2" style="text-align: center; padding: 10px;">
+                                        <?php _e('No data available', 'site-logger'); ?>
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($logs_by_user as $user): ?>
+                                    <?php $user_info = get_user_by('id', $user->user_id); ?>
+                                    <tr>
+                                        <td>
+                                            <?php if ($user_info): ?>
+                                                <a href="<?php echo get_edit_user_link($user->user_id); ?>">
+                                                    <?php echo esc_html($user_info->display_name); ?>
+                                                </a>
+                                            <?php else: ?>
+                                                <?php echo sprintf(__('User #%d', 'site-logger'), $user->user_id); ?>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td><?php echo number_format($user->count); ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Severity Distribution -->
+            <div style="background: #fff; padding: 20px; border-radius: 4px; margin: 20px 0;">
+                <h3 style="margin-top: 0;"><?php _e('Severity Distribution', 'site-logger'); ?></h3>
+                <div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: center;">
+                    <?php
+                    $severities = [
+                        'emergency' => ['label' => 'Emergency', 'color' => '#dc3232'],
+                        'alert' => ['label' => 'Alert', 'color' => '#f56e28'],
+                        'critical' => ['label' => 'Critical', 'color' => '#d63638'],
+                        'error' => ['label' => 'Error', 'color' => '#ff0000'],
+                        'warning' => ['label' => 'Warning', 'color' => '#ffb900'],
+                        'notice' => ['label' => 'Notice', 'color' => '#00a0d2'],
+                        'info' => ['label' => 'Info', 'color' => '#2271b1'],
+                        'debug' => ['label' => 'Debug', 'color' => '#a7aaad'],
+                    ];
+                    
+                    foreach ($severities as $key => $severity):
+                        $count = $summary[$key] ?? 0;
+                        if ($count > 0):
+                    ?>
+                    <div style="text-align: center;">
+                        <div style="width: 80px; height: 80px; border-radius: 50%; background: <?php echo $severity['color']; ?>; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; margin: 0 auto 10px;">
+                            <?php echo number_format($count); ?>
+                        </div>
+                        <div style="font-size: 12px; color: #646970;"><?php echo $severity['label']; ?></div>
+                    </div>
+                    <?php
+                        endif;
+                    endforeach;
+                    ?>
+                </div>
+            </div>
+            
+            <!-- Recent Activity -->
+            <div style="background: #fff; padding: 20px; border-radius: 4px; margin: 20px 0;">
+                <h3 style="margin-top: 0;"><?php _e('Recent Activity', 'site-logger'); ?></h3>
+                <?php
+                $recent_logs = self::get_logs(10);
+                if (empty($recent_logs)):
+                ?>
+                    <p><?php _e('No recent activity found.', 'site-logger'); ?></p>
+                <?php else: ?>
+                    <table class="wp-list-table widefat fixed striped">
+                        <thead>
+                            <tr>
+                                <th width="150"><?php _e('Time', 'site-logger'); ?></th>
+                                <th width="100"><?php _e('Severity', 'site-logger'); ?></th>
+                                <th width="120"><?php _e('User', 'site-logger'); ?></th>
+                                <th width="150"><?php _e('Action', 'site-logger'); ?></th>
+                                <th width="150"><?php _e('Object', 'site-logger'); ?></th>
+                                <th><?php _e('Details', 'site-logger'); ?></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($recent_logs as $log): ?>
+                                <?php
+                                $user = $log->user_id ? get_user_by('id', $log->user_id) : null;
+                                $username = $user ? $user->display_name : __('System', 'site-logger');
+                                $time = date_i18n('M j, H:i:s', strtotime($log->timestamp));
+                                ?>
+                                <tr>
+                                    <td><?php echo esc_html($time); ?></td>
+                                    <td>
+                                        <span class="severity-badge severity-<?php echo esc_attr($log->severity); ?>" 
+                                              style="display: inline-block; padding: 3px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; text-transform: uppercase; background: #f0f0f1; color: #50575e;">
+                                            <?php echo esc_html(ucfirst($log->severity)); ?>
+                                        </span>
+                                    </td>
+                                    <td><?php echo esc_html($username); ?></td>
+                                    <td><code><?php echo esc_html(self::format_action($log->action)); ?></code></td>
+                                    <td><?php echo esc_html(self::get_object_display_text($log)); ?></td>
+                                    <td>
+                                        <?php if ($log->details): ?>
+                                            <span title="<?php echo esc_attr(json_encode($log->details, JSON_UNESCAPED_UNICODE)); ?>">
+                                                <?php _e('View Details', 'site-logger'); ?>
+                                            </span>
+                                        <?php else: ?>
+                                            <em><?php _e('No details', 'site-logger'); ?></em>
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                <?php endif; ?>
+            </div>
+            
+            <!-- Quick Links -->
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <a href="<?php echo admin_url('admin.php?page=site-logs'); ?>" class="button button-primary">
+                    <?php _e('View All Logs', 'site-logger'); ?>
+                </a>
+                <a href="<?php echo admin_url('admin.php?page=site-logs-settings'); ?>" class="button">
+                    <?php _e('Settings', 'site-logger'); ?>
+                </a>
+            </div>
+        </div>
+        
+        <style>
+        .severity-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .severity-emergency { background: #dc3232; color: white; }
+        .severity-alert { background: #f56e28; color: white; }
+        .severity-critical { background: #d63638; color: white; }
+        .severity-error { background: #ff0000; color: white; }
+        .severity-warning { background: #ffb900; color: #000; }
+        .severity-notice { background: #00a0d2; color: white; }
+        .severity-info { background: #2271b1; color: white; }
+        .severity-debug { background: #a7aaad; color: #000; }
+        </style>
+        <?php
     }
 }
