@@ -114,6 +114,7 @@ class Site_Logger_Hooks {
     // Taxonomy terms - ENHANCED with better hooks
     add_action('created_term', [$this, 'log_term_created'], 10, 3);
     add_action('edited_term', [$this, 'log_term_updated'], 10, 3);
+    add_action('edit_term', [$this, 'store_old_term_properties'], 5, 3);
     add_action('delete_term', [$this, 'log_term_deleted'], 10, 4);
     add_action('set_object_terms', [$this, 'log_object_terms_change'], 10, 6);
     
@@ -1229,176 +1230,312 @@ class Site_Logger_Hooks {
     /**
      * FIXED: Enhanced term update logging
      */
+    // public function log_term_updated($term_id, $tt_id, $taxonomy) {
+    //     if (in_array($term_id, self::$processed_terms)) {
+    //         return;
+    //     }
+        
+    //     self::$processed_terms[] = $term_id;
+        
+    //     $term = get_term($term_id, $taxonomy);
+    //     if (is_wp_error($term) || !$term) {
+    //         return;
+    //     }
+        
+    //     $taxonomy_obj = get_taxonomy($taxonomy);
+    //     $taxonomy_name = $taxonomy_obj->labels->singular_name ?? $taxonomy;
+        
+    //     $details = [
+    //         'taxonomy' => $taxonomy_name,
+    //         'action' => 'Taxonomy term updated'
+    //     ];
+        
+    //     $has_changes = false;
+        
+    //     // Get old data
+    //     $old_data = isset(self::$old_taxonomy_data[$taxonomy][$term_id]) 
+    //         ? self::$old_taxonomy_data[$taxonomy][$term_id] 
+    //         : [];
+        
+    //     // Check for name changes
+    //     if (!empty($_POST)) {
+    //         // Check various possible name fields
+    //         $new_name = '';
+    //         if (isset($_POST['name'])) {
+    //             $new_name = sanitize_text_field($_POST['name']);
+    //         } elseif (isset($_POST['tag-name'])) {
+    //             $new_name = sanitize_text_field($_POST['tag-name']);
+    //         }
+            
+    //         if (!empty($new_name) && $new_name !== $term->name) {
+    //             $old_name = isset($old_data['name']) ? $old_data['name'] : $term->name;
+    //             $details['name'] = [
+    //                 'old' => $old_name,
+    //                 'new' => $new_name
+    //             ];
+    //             $has_changes = true;
+    //         }
+            
+    //         // Check for slug changes
+    //         $new_slug = '';
+    //         if (isset($_POST['slug'])) {
+    //             $new_slug = sanitize_title($_POST['slug']);
+    //         } elseif (isset($_POST['tag-slug'])) {
+    //             $new_slug = sanitize_title($_POST['tag-slug']);
+    //         }
+            
+    //         if (!empty($new_slug) && $new_slug !== $term->slug) {
+    //             $old_slug = isset($old_data['slug']) ? $old_data['slug'] : $term->slug;
+    //             $details['slug'] = [
+    //                 'old' => $old_slug,
+    //                 'new' => $new_slug
+    //             ];
+    //             $has_changes = true;
+    //         }
+            
+    //         // Check for description changes
+    //         $new_description = '';
+    //         if (isset($_POST['description'])) {
+    //             $new_description = sanitize_textarea_field($_POST['description']);
+    //         } elseif (isset($_POST['tag-description'])) {
+    //             $new_description = sanitize_textarea_field($_POST['tag-description']);
+    //         }
+            
+    //         if ($new_description !== '') {
+    //             $current_description = $term->description ?? '';
+    //             if (trim($current_description) !== trim($new_description)) {
+    //                 $old_desc = isset($old_data['description']) ? $old_data['description'] : $current_description;
+    //                 $old_desc = $old_desc ?: '(empty)';
+    //                 $new_desc = $new_description ?: '(empty)';
+                    
+    //                 $details['description'] = [
+    //                     'old' => substr($old_desc, 0, 100) . (strlen($old_desc) > 100 ? '...' : ''),
+    //                     'new' => substr($new_desc, 0, 100) . (strlen($new_desc) > 100 ? '...' : '')
+    //                 ];
+    //                 $has_changes = true;
+    //             }
+    //         }
+            
+    //         // Check for parent changes
+    //         $new_parent = 0;
+    //         if (isset($_POST['parent'])) {
+    //             $new_parent = intval($_POST['parent']);
+    //         } elseif (isset($_POST['tag-parent'])) {
+    //             $new_parent = intval($_POST['tag-parent']);
+    //         }
+            
+    //         if ($new_parent !== 0) {
+    //             $current_parent = $term->parent ?? 0;
+    //             if ($current_parent != $new_parent) {
+    //                 $old_parent_name = 'None (Top Level)';
+    //                 if ($current_parent > 0) {
+    //                     $parent_term = get_term($current_parent, $taxonomy);
+    //                     $old_parent_name = $parent_term ? $parent_term->name : 'Term #' . $current_parent;
+    //                 }
+                    
+    //                 $new_parent_name = 'None (Top Level)';
+    //                 if ($new_parent > 0) {
+    //                     $parent_term = get_term($new_parent, $taxonomy);
+    //                     $new_parent_name = $parent_term ? $parent_term->name : 'Term #' . $new_parent;
+    //                 }
+                    
+    //                 $details['parent_term'] = [
+    //                     'old' => $old_parent_name,
+    //                     'new' => $new_parent_name
+    //                 ];
+    //                 $has_changes = true;
+    //             }
+    //         }
+            
+    //         // Check for term meta changes
+    //         if (!empty($_POST['term_meta'])) {
+    //             if (is_array($_POST['term_meta'])) {
+    //                 foreach ($_POST['term_meta'] as $meta_key => $meta_value) {
+    //                     if (strpos($meta_key, '_') === 0) {
+    //                         continue;
+    //                     }
+                        
+    //                     $old_value = get_term_meta($term_id, $meta_key, true);
+    //                     $new_value = is_array($meta_value) ? $meta_value : sanitize_text_field($meta_value);
+                        
+    //                     if ($this->values_differ($old_value, $new_value)) {
+    //                         $meta_label = ucwords(str_replace(['_', '-'], ' ', $meta_key));
+    //                         $details["term_meta: {$meta_label}"] = [
+    //                             'old' => $this->format_field_value($old_value),
+    //                             'new' => $this->format_field_value($new_value)
+    //                         ];
+    //                         $has_changes = true;
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+        
+    //     // Add term edit link
+    //     $edit_url = get_edit_term_link($term_id, $taxonomy);
+    //     if ($edit_url) {
+    //         $details['edit_term'] = "<a href='" . esc_url($edit_url) . "' target='_blank'>✏️ Edit {$taxonomy_name}</a>";
+    //     }
+        
+    //     // Add view link
+    //     $term_url = get_term_link($term_id, $taxonomy);
+    //     if (!is_wp_error($term_url) && $term_url) {
+    //         $details['view_term'] = "<a href='" . esc_url($term_url) . "' target='_blank'>👁️ View {$taxonomy_name}</a>";
+    //     }
+        
+    //     if ($has_changes) {
+    //         Site_Logger::log(
+    //             'term_updated',
+    //             'term',
+    //             $term_id,
+    //             $term->name,
+    //             $details,
+    //             'info'
+    //         );
+    //     }
+        
+    //     // Clean up old data
+    //     if (isset(self::$old_taxonomy_data[$taxonomy][$term_id])) {
+    //         unset(self::$old_taxonomy_data[$taxonomy][$term_id]);
+    //     }
+    // }
     public function log_term_updated($term_id, $tt_id, $taxonomy) {
-        if (in_array($term_id, self::$processed_terms)) {
-            return;
-        }
-        
-        self::$processed_terms[] = $term_id;
-        
-        $term = get_term($term_id, $taxonomy);
-        if (is_wp_error($term) || !$term) {
-            return;
-        }
-        
-        $taxonomy_obj = get_taxonomy($taxonomy);
-        $taxonomy_name = $taxonomy_obj->labels->singular_name ?? $taxonomy;
-        
-        $details = [
-            'taxonomy' => $taxonomy_name,
-            'action' => 'Taxonomy term updated'
+    if (in_array($term_id, self::$processed_terms)) {
+        return;
+    }
+
+    self::$processed_terms[] = $term_id;
+
+    $term = get_term($term_id, $taxonomy);
+    if (is_wp_error($term) || !$term) {
+        return;
+    }
+
+    $taxonomy_obj = get_taxonomy($taxonomy);
+    $taxonomy_name = $taxonomy_obj->labels->singular_name ?? $taxonomy;
+
+    $details = [
+        'taxonomy' => $taxonomy_name,
+        'action' => 'Taxonomy term updated'
+    ];
+
+    $has_changes = false;
+
+    // Get old data
+    $old_data = isset(self::$old_taxonomy_data[$taxonomy][$term_id])
+        ? self::$old_taxonomy_data[$taxonomy][$term_id]
+        : [];
+
+    // Compare name
+    if (isset($old_data['name']) && $old_data['name'] !== $term->name) {
+        $details['name'] = [
+            'old' => $old_data['name'],
+            'new' => $term->name
         ];
-        
-        $has_changes = false;
-        
-        // Get old data
-        $old_data = isset(self::$old_taxonomy_data[$taxonomy][$term_id]) 
-            ? self::$old_taxonomy_data[$taxonomy][$term_id] 
-            : [];
-        
-        // Check for name changes
-        if (!empty($_POST)) {
-            // Check various possible name fields
-            $new_name = '';
-            if (isset($_POST['name'])) {
-                $new_name = sanitize_text_field($_POST['name']);
-            } elseif (isset($_POST['tag-name'])) {
-                $new_name = sanitize_text_field($_POST['tag-name']);
-            }
-            
-            if (!empty($new_name) && $new_name !== $term->name) {
-                $old_name = isset($old_data['name']) ? $old_data['name'] : $term->name;
-                $details['name'] = [
-                    'old' => $old_name,
-                    'new' => $new_name
-                ];
-                $has_changes = true;
-            }
-            
-            // Check for slug changes
-            $new_slug = '';
-            if (isset($_POST['slug'])) {
-                $new_slug = sanitize_title($_POST['slug']);
-            } elseif (isset($_POST['tag-slug'])) {
-                $new_slug = sanitize_title($_POST['tag-slug']);
-            }
-            
-            if (!empty($new_slug) && $new_slug !== $term->slug) {
-                $old_slug = isset($old_data['slug']) ? $old_data['slug'] : $term->slug;
-                $details['slug'] = [
-                    'old' => $old_slug,
-                    'new' => $new_slug
-                ];
-                $has_changes = true;
-            }
-            
-            // Check for description changes
-            $new_description = '';
-            if (isset($_POST['description'])) {
-                $new_description = sanitize_textarea_field($_POST['description']);
-            } elseif (isset($_POST['tag-description'])) {
-                $new_description = sanitize_textarea_field($_POST['tag-description']);
-            }
-            
-            if ($new_description !== '') {
-                $current_description = $term->description ?? '';
-                if (trim($current_description) !== trim($new_description)) {
-                    $old_desc = isset($old_data['description']) ? $old_data['description'] : $current_description;
-                    $old_desc = $old_desc ?: '(empty)';
-                    $new_desc = $new_description ?: '(empty)';
-                    
-                    $details['description'] = [
-                        'old' => substr($old_desc, 0, 100) . (strlen($old_desc) > 100 ? '...' : ''),
-                        'new' => substr($new_desc, 0, 100) . (strlen($new_desc) > 100 ? '...' : '')
-                    ];
-                    $has_changes = true;
+        $has_changes = true;
+    }
+
+    // Compare slug
+    if (isset($old_data['slug']) && $old_data['slug'] !== $term->slug) {
+        $details['slug'] = [
+            'old' => $old_data['slug'],
+            'new' => $term->slug
+        ];
+        $has_changes = true;
+    }
+
+    // Compare description
+    if (isset($old_data['description']) && trim($old_data['description']) !== trim($term->description)) {
+        $old_desc = $old_data['description'] ?: '(empty)';
+        $new_desc = $term->description ?: '(empty)';
+        $details['description'] = [
+            'old' => substr($old_desc, 0, 100) . (strlen($old_desc) > 100 ? '...' : ''),
+            'new' => substr($new_desc, 0, 100) . (strlen($new_desc) > 100 ? '...' : '')
+        ];
+        $has_changes = true;
+    }
+
+    // Compare parent
+    if (isset($old_data['parent']) && $old_data['parent'] != $term->parent) {
+        $old_parent_name = 'None (Top Level)';
+        if ($old_data['parent'] > 0) {
+            $parent_term = get_term($old_data['parent'], $taxonomy);
+            $old_parent_name = $parent_term && !is_wp_error($parent_term) ? $parent_term->name : 'Term #' . $old_data['parent'];
+        }
+
+        $new_parent_name = 'None (Top Level)';
+        if ($term->parent > 0) {
+            $parent_term = get_term($term->parent, $taxonomy);
+            $new_parent_name = $parent_term && !is_wp_error($parent_term) ? $parent_term->name : 'Term #' . $term->parent;
+        }
+
+        $details['parent_term'] = [
+            'old' => $old_parent_name,
+            'new' => $new_parent_name
+        ];
+        $has_changes = true;
+    }
+
+    // Add term edit link
+    $edit_url = get_edit_term_link($term_id, $taxonomy);
+    if ($edit_url) {
+        $details['edit_term'] = "<a href='" . esc_url($edit_url) . "' target='_blank'>✏️ Edit {$taxonomy_name}</a>";
+    }
+
+    // Add view link
+    $term_url = get_term_link($term_id, $taxonomy);
+    if (!is_wp_error($term_url) && $term_url) {
+        $details['view_term'] = "<a href='" . esc_url($term_url) . "' target='_blank'>👁️ View {$taxonomy_name}</a>";
+    }
+
+    if ($has_changes) {
+        Site_Logger::log(
+            'term_updated',
+            'term',
+            $term_id,
+            $term->name,
+            $details,
+            'info'
+        );
+    }
+
+    // Clean up old data
+    if (isset(self::$old_taxonomy_data[$taxonomy][$term_id])) {
+        unset(self::$old_taxonomy_data[$taxonomy][$term_id]);
+    }
+}
+    
+
+/**
+ * Store old term properties before it is edited (for full/non-AJAX term edits)
+ */
+public function store_old_term_properties($term_id, $tt_id, $taxonomy) {
+    $term = get_term($term_id, $taxonomy);
+    if ($term && !is_wp_error($term)) {
+        if (!isset(self::$old_taxonomy_data[$taxonomy])) {
+            self::$old_taxonomy_data[$taxonomy] = [];
+        }
+
+        self::$old_taxonomy_data[$taxonomy][$term_id] = [
+            'name'        => $term->name,
+            'slug'        => $term->slug,
+            'description' => $term->description,
+            'parent'      => $term->parent
+        ];
+
+        // Store all term meta (optional but useful if you later want to log term meta changes here)
+        $all_term_meta = get_term_meta($term_id);
+        if ($all_term_meta) {
+            self::$old_taxonomy_data[$taxonomy][$term_id]['meta'] = [];
+            foreach ($all_term_meta as $meta_key => $meta_values) {
+                if (isset($meta_values[0])) {
+                    self::$old_taxonomy_data[$taxonomy][$term_id]['meta'][$meta_key] = maybe_unserialize($meta_values[0]);
                 }
             }
-            
-            // Check for parent changes
-            $new_parent = 0;
-            if (isset($_POST['parent'])) {
-                $new_parent = intval($_POST['parent']);
-            } elseif (isset($_POST['tag-parent'])) {
-                $new_parent = intval($_POST['tag-parent']);
-            }
-            
-            if ($new_parent !== 0) {
-                $current_parent = $term->parent ?? 0;
-                if ($current_parent != $new_parent) {
-                    $old_parent_name = 'None (Top Level)';
-                    if ($current_parent > 0) {
-                        $parent_term = get_term($current_parent, $taxonomy);
-                        $old_parent_name = $parent_term ? $parent_term->name : 'Term #' . $current_parent;
-                    }
-                    
-                    $new_parent_name = 'None (Top Level)';
-                    if ($new_parent > 0) {
-                        $parent_term = get_term($new_parent, $taxonomy);
-                        $new_parent_name = $parent_term ? $parent_term->name : 'Term #' . $new_parent;
-                    }
-                    
-                    $details['parent_term'] = [
-                        'old' => $old_parent_name,
-                        'new' => $new_parent_name
-                    ];
-                    $has_changes = true;
-                }
-            }
-            
-            // Check for term meta changes
-            if (!empty($_POST['term_meta'])) {
-                if (is_array($_POST['term_meta'])) {
-                    foreach ($_POST['term_meta'] as $meta_key => $meta_value) {
-                        if (strpos($meta_key, '_') === 0) {
-                            continue;
-                        }
-                        
-                        $old_value = get_term_meta($term_id, $meta_key, true);
-                        $new_value = is_array($meta_value) ? $meta_value : sanitize_text_field($meta_value);
-                        
-                        if ($this->values_differ($old_value, $new_value)) {
-                            $meta_label = ucwords(str_replace(['_', '-'], ' ', $meta_key));
-                            $details["term_meta: {$meta_label}"] = [
-                                'old' => $this->format_field_value($old_value),
-                                'new' => $this->format_field_value($new_value)
-                            ];
-                            $has_changes = true;
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Add term edit link
-        $edit_url = get_edit_term_link($term_id, $taxonomy);
-        if ($edit_url) {
-            $details['edit_term'] = "<a href='" . esc_url($edit_url) . "' target='_blank'>✏️ Edit {$taxonomy_name}</a>";
-        }
-        
-        // Add view link
-        $term_url = get_term_link($term_id, $taxonomy);
-        if (!is_wp_error($term_url) && $term_url) {
-            $details['view_term'] = "<a href='" . esc_url($term_url) . "' target='_blank'>👁️ View {$taxonomy_name}</a>";
-        }
-        
-        if ($has_changes) {
-            Site_Logger::log(
-                'term_updated',
-                'term',
-                $term_id,
-                $term->name,
-                $details,
-                'info'
-            );
-        }
-        
-        // Clean up old data
-        if (isset(self::$old_taxonomy_data[$taxonomy][$term_id])) {
-            unset(self::$old_taxonomy_data[$taxonomy][$term_id]);
         }
     }
-    
+}
+
     
     public function log_term_created($term_id, $tt_id, $taxonomy) {
         if (in_array($term_id, self::$processed_terms)) {
