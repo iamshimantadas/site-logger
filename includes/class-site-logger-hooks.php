@@ -2730,60 +2730,65 @@ class Site_Logger_Hooks {
         );
     }
     
-
     public function log_export_start($args) {
-        $content = isset($args['content']) ? $args['content'] : 'all';
-        $author = isset($args['author']) ? $args['author'] : 'all';
-        
-        $content_types = [
-            'all' => 'All content',
-            'post' => 'Posts',
-            'page' => 'Pages',
-            'attachment' => 'Media',
-            'custom_post_type' => 'Custom Post Type'
-        ];
-        
-        $details = [
-            'content_type' => $content_types[$content] ?? ucfirst($content),
-            'author' => $author === 'all' ? 'All authors' : 'Author ID: ' . $author,
-        ];
-        
-        if (isset($args['status']) && $args['status'] !== 'any') {
-            $details['status'] = $args['status'];
-        }
-        
-        if (isset($args['start_date']) && !empty($args['start_date'])) {
-            $details['start_date'] = $args['start_date'];
-        }
-        
-        if (isset($args['end_date']) && !empty($args['end_date'])) {
-            $details['end_date'] = $args['end_date'];
-        }
-        
-        if (isset($args['category']) && $args['category'] !== 0 && $args['category'] !== 'all') {
-            $category = get_category($args['category']);
-            $details['category'] = $category ? $category->name : 'Category ID: ' . $args['category'];
-        }
-        
-        if (isset($args['taxonomy']) && $args['taxonomy'] !== 'all') {
-            $taxonomy_obj = get_taxonomy($args['taxonomy']);
-            $details['taxonomy'] = $taxonomy_obj ? $taxonomy_obj->labels->singular_name : $args['taxonomy'];
-        }
-        
-        if (isset($args['post_type']) && !empty($args['post_type'])) {
-            $post_type_obj = get_post_type_object($args['post_type']);
-            $details['post_type'] = $post_type_obj ? $post_type_obj->labels->name : $args['post_type'];
-        }
-        
-        Site_Logger::log(
-            'export_started',
-            'tool',
-            0,
-            'Content Export: ' . ($content_types[$content] ?? ucfirst($content)),
-            $details,
-            'info'
-        );
+    $content = isset($args['content']) ? $args['content'] : 'all';
+    $author = isset($args['author']) ? $args['author'] : 'all';
+    
+    $content_types = [
+        'all' => 'All content',
+        'post' => 'Posts',
+        'page' => 'Pages',
+        'attachment' => 'Media',
+        'custom_post_type' => 'Custom Post Type'
+    ];
+    
+    // ADD THIS: Create export page link
+    $export_url = admin_url('export.php');
+    $export_link = "<a href='" . esc_url($export_url) . "' target='_blank'>📤 Go to Export Tools</a>";
+    
+    $details = [
+        'content_type' => $content_types[$content] ?? ucfirst($content),
+        'author' => $author === 'all' ? 'All authors' : 'Author ID: ' . $author,
+        'export_page' => $export_link, // ADD THIS LINE
+    ];
+    
+    // Add conditional details if they exist
+    if (isset($args['status']) && $args['status'] !== 'any') {
+        $details['status'] = $args['status'];
     }
+    
+    if (isset($args['start_date']) && !empty($args['start_date'])) {
+        $details['start_date'] = $args['start_date'];
+    }
+    
+    if (isset($args['end_date']) && !empty($args['end_date'])) {
+        $details['end_date'] = $args['end_date'];
+    }
+    
+    if (isset($args['category']) && $args['category'] !== 0 && $args['category'] !== 'all') {
+        $category = get_category($args['category']);
+        $details['category'] = $category ? $category->name : 'Category ID: ' . $args['category'];
+    }
+    
+    if (isset($args['taxonomy']) && $args['taxonomy'] !== 'all') {
+        $taxonomy_obj = get_taxonomy($args['taxonomy']);
+        $details['taxonomy'] = $taxonomy_obj ? $taxonomy_obj->labels->singular_name : $args['taxonomy'];
+    }
+    
+    if (isset($args['post_type']) && !empty($args['post_type'])) {
+        $post_type_obj = get_post_type_object($args['post_type']);
+        $details['post_type'] = $post_type_obj ? $post_type_obj->labels->name : $args['post_type'];
+    }
+    
+    Site_Logger::log(
+        'export_started',
+        'tool',
+        0,
+        'Content Export: ' . ($content_types[$content] ?? ucfirst($content)),
+        $details,
+        'info'
+    );
+}
     
    
     public function log_featured_image_add($meta_id, $post_id, $meta_key, $meta_value) {
