@@ -4654,23 +4654,106 @@ class Site_Logger_Hooks
         );
     }
 
-    public function log_login_failed($username)
-    {
-        $details = [
-            'username' => $username,
-            'ip' => $_SERVER['REMOTE_ADDR'] ?? 'Unknown',
-            'action' => 'Failed login attempt'
-        ];
+    // public function log_login_failed($username)
+    // {
+    //     $details = [
+    //         'username' => $username,
+    //         'ip' => $_SERVER['REMOTE_ADDR'] ?? 'Unknown',
+    //         'action' => 'Failed login attempt'
+    //     ];
 
-        Site_Logger::log(
-            'login_failed',
-            'security',
-            0,
-            'Failed login: ' . $username,
-            $details,
-            'warning'
-        );
+    //     Site_Logger::log(
+    //         'login_failed',
+    //         'security',
+    //         0,
+    //         'Failed login: ' . $username,
+    //         $details,
+    //         'warning'
+    //     );
+    // }
+
+    /**
+ * Enhanced login failure logging with user existence check
+ */
+public function log_login_failed($username) {
+    $ip = $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
+    
+    // Check if username/email exists
+    $user_by_login = get_user_by('login', $username);
+    $user_by_email = get_user_by('email', $username);
+    $user_exists = ($user_by_login || $user_by_email);
+    
+    // Determine severity and message
+    if ($user_exists) {
+        $severity = 'warning';
+        $action_type = 'Invalid password attempt';
+        $details_message = 'Username exists but password was incorrect';
+    } else {
+        $severity = 'critical';
+        $action_type = 'Non-existent user attempt';
+        $details_message = 'Username/email does not exist in the system';
     }
+    
+    // Check for brute force patterns (simple detection)
+    $is_brute_force = $this->detect_brute_force($ip);
+    if ($is_brute_force['is_brute_force']) {
+        $severity = 'critical';
+        $action_type .= ' (Possible brute force attack)';
+    }
+    
+    $details = [
+        'username' => $username,
+        'ip' => $ip,
+        'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown',
+        'user_exists' => $user_exists ? 'Yes' : 'No',
+        'attempt_type' => $action_type,
+        'note' => $details_message,
+    ];
+    
+    // Add brute force info if detected
+    if ($is_brute_force['is_brute_force']) {
+        $details['security_alert'] = 'Multiple failed attempts detected from this IP';
+        $details['attempt_count'] = $is_brute_force['attempt_count'];
+    }
+    
+    Site_Logger::log(
+        'login_failed',
+        'security',
+        0,
+        'Failed login: ' . ($user_exists ? 'Invalid password' : 'Non-existent user'),
+        $details,
+        $severity
+    );
+}
+
+/**
+ * Simple brute force detection
+ */
+private function detect_brute_force($ip) {
+    global $wpdb;
+    $table_name = $wpdb->prefix . Site_Logger::TABLE_NAME;
+    
+    // Check for multiple failed attempts from same IP (last 15 minutes)
+    $time_limit = date('Y-m-d H:i:s', strtotime('-15 minutes'));
+    
+    $attempt_count = $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT COUNT(*) as attempt_count 
+             FROM $table_name 
+             WHERE user_ip = %s 
+             AND action = 'login_failed' 
+             AND timestamp > %s",
+            $ip,
+            $time_limit
+        )
+    );
+    
+    // Simple threshold: 10+ attempts in 15 minutes = brute force
+    return [
+        'is_brute_force' => ($attempt_count >= 10),
+        'attempt_count' => $attempt_count
+    ];
+}
 
 
     /**

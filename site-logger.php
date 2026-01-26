@@ -1,10 +1,10 @@
 <?php
 /**
  * Plugin Name: Site Logger
- * Plugin URI: https://github.com/yourusername/site-logger
+ * Plugin URI: https://github.com/iamshimantadas/site-logger
  * Description: Minimal activity logger for WordPress
  * Version: 1.0.0
- * Author: Your Name
+ * Author: Shimanta Das
  * License: GPL v2 or later
  * Text Domain: site-logger
  */
