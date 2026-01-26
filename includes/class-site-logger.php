@@ -252,12 +252,21 @@ class Site_Logger {
         
         $results = $wpdb->get_results($query);
         
-        // Decode JSON details for each log
         foreach ($results as $log) {
-            if (!empty($log->details)) {
-                $log->details = json_decode($log->details, true);
+    if (!empty($log->details)) {
+        // Try to decode as JSON first
+        $decoded = json_decode($log->details, true);
+        if (json_last_error() === JSON_ERROR_NONE) {
+            $log->details = $decoded;
+        } else {
+            // If not JSON, try unserialize
+            $unserialized = maybe_unserialize($log->details);
+            if (is_array($unserialized) || is_object($unserialized)) {
+                $log->details = (array)$unserialized;
             }
         }
+    }
+}
         
         return $results;
     }
@@ -905,6 +914,108 @@ class Site_Logger {
             }
         }
         </style>
+        
+         <style>
+          .content-change-box {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 12px 16px;
+            margin: 8px 0 12px;
+            font-size: 13px;
+        }
+
+        .content-header {
+            font-size: 14px;
+            font-weight: 600;
+            color: #1e40af;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .added-chars { color: #15803d; font-weight: bold; }
+        .removed-chars { color: #b91c1c; font-weight: bold; }
+
+        .diff-section {
+            margin: 12px 0;
+            border-radius: 4px;
+            overflow: hidden;
+            border: 1px solid #e5e7eb;
+        }
+
+        .diff-title {
+            background: #f1f5f9;
+            padding: 6px 12px;
+            font-weight: 600;
+            font-size: 12px;
+        }
+
+        .diff-section.added .diff-title {
+            background: #ecfdf5;
+            color: #065f46;
+        }
+
+        .diff-section.modified .diff-title {
+            background: #fffbeb;
+            color: #92400e;
+        }
+
+        .diff-pre {
+            margin: 0;
+            padding: 10px 12px;
+            background: white;
+            font-family: Consolas, Monaco, monospace;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-size: 12.5px;
+            line-height: 1.45;
+            max-height: 160px;
+            overflow-y: auto;
+        }
+
+        .mod-line {
+            padding: 8px 12px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .mod-line:last-child {
+            border-bottom: none;
+        }
+
+        .old-text {
+            color: #991b1b;
+            text-decoration: line-through;
+            background: #fef2f2;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+
+        .new-text {
+            color: #065f46;
+            background: #ecfdf5;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+
+        .more-info {
+            text-align: center;
+            color: #6b7280;
+            font-size: 12px;
+            padding: 8px;
+            font-style: italic;
+        }
+
+        .word-summary {
+            margin-top: 10px;
+            font-size: 12.5px;
+            color: #4b5563;
+            padding: 6px 10px;
+            background: #f1f5f9;
+            border-radius: 4px;
+        }
+        </style>
+
         <?php
         
         // Handle CSV export
@@ -1010,81 +1121,58 @@ class Site_Logger {
      */
     private static function format_details_display($details) {
         if (empty($details) || !is_array($details)) {
-            return '<em>' . __('No details', 'site-logger') . '</em>';
+            return '<em>No details available</em>';
         }
-        
+
         $output = '<div class="log-details">';
-        
-        foreach ($details as $key => $value) {
-            if ($key === 'edit_post' || $key === 'view_post' || $key === 'visit_user' || 
-                $key === 'edit_user' || $key === 'settings_page' || $key === 'view_revisions' || 
-                $key === 'view_media' || $key === 'plugin_details' || $key === 'edit_term' ||
-                $key === 'edit_acf_group') {
-                continue; // Skip these as they'll be added separately
+
+        // 1. Collect action links to show at the bottom
+        $action_links = [];
+        $link_keys = ['edit_post', 'view_post', 'view_revisions', 'edit_term', 'edit_acf_group', 'visit_user', 'settings_page', 'view_media', 'plugin_details'];
+        foreach ($link_keys as $key) {
+            if (!empty($details[$key])) {
+                $action_links[] = $details[$key];
+                unset($details[$key]); // remove so we don't show twice
             }
-            
+        }
+
+        // 2. Loop through remaining details
+        foreach ($details as $key => $value) {
+            // Special beautiful rendering for content changes
+            if ($key === 'content' && is_array($value)) {
+                $output .= self::render_beautiful_content_changes($value);
+                continue;
+            }
+
+            // Normal key-value
             $output .= '<div class="detail-item">';
             $output .= '<span class="detail-key">' . esc_html(ucfirst(str_replace('_', ' ', $key))) . ':</span> ';
-            
+
             if (is_array($value)) {
                 if (isset($value['old']) && isset($value['new'])) {
-                    // Before/after change
                     $output .= '<span class="change-old">"' . esc_html($value['old']) . '"</span>';
                     $output .= '<span class="change-arrow"> → </span>';
                     $output .= '<span class="change-new">"' . esc_html($value['new']) . '"</span>';
-                } elseif (isset($value['added']) || isset($value['removed'])) {
-                    // Array changes
-                    if (!empty($value['added'])) {
-                        $added_items = is_array($value['added']) ? implode(', ', $value['added']) : $value['added'];
-                        $output .= '<span class="change-new">➕ Added: ' . esc_html($added_items) . '</span>';
-                    }
-                    if (!empty($value['removed'])) {
-                        if (!empty($value['added'])) $output .= '<br>';
-                        $removed_items = is_array($value['removed']) ? implode(', ', $value['removed']) : $value['removed'];
-                        $output .= '<span class="change-old">➖ Removed: ' . esc_html($removed_items) . '</span>';
-                    }
-                } elseif (!empty($value)) {
-                    $output .= '<span class="detail-value">' . esc_html(json_encode($value, JSON_UNESCAPED_UNICODE)) . '</span>';
-                }
-            } elseif (is_string($value)) {
-                // Check for special strings
-                if (strpos($value, 'Content updated') !== false) {
-                    $output .= '<span class="detail-value">📝 ' . esc_html($value) . '</span>';
-                } elseif (strpos($value, 'featured image') !== false) {
-                    $output .= '<span class="detail-value">🖼️ ' . esc_html($value) . '</span>';
-                } elseif (strpos($value, 'Updated:') !== false) {
-                    $output .= '<span class="detail-value">🔧 ' . esc_html($value) . '</span>';
-                } elseif (strpos($value, 'Set to:') !== false) {
-                    $output .= '<span class="detail-value">🏷️ ' . esc_html($value) . '</span>';
                 } else {
-                    $output .= '<span class="detail-value">' . esc_html($value) . '</span>';
+                    $output .= '<pre>' . esc_html(json_encode($value, JSON_PRETTY_PRINT)) . '</pre>';
                 }
+            } else {
+                $output .= '<span class="detail-value">' . esc_html($value) . '</span>';
             }
-            
+
             $output .= '</div>';
         }
-        
-        // Add action links at the end
-        $action_links = '';
-        if (isset($details['view_revisions'])) $action_links .= $details['view_revisions'] . ' ';
-        if (isset($details['edit_post'])) $action_links .= $details['edit_post'] . ' ';
-        if (isset($details['view_post'])) $action_links .= $details['view_post'] . ' ';
-        if (isset($details['visit_user'])) $action_links .= $details['visit_user'] . ' ';
-        if (isset($details['edit_user'])) $action_links .= $details['edit_user'] . ' ';
-        if (isset($details['settings_page'])) $action_links .= $details['settings_page'] . ' ';
-        if (isset($details['view_media'])) $action_links .= $details['view_media'] . ' ';
-        if (isset($details['plugin_details'])) $action_links .= $details['plugin_details'] . ' ';
-        if (isset($details['edit_term'])) $action_links .= $details['edit_term'] . ' ';
-        if (isset($details['edit_acf_group'])) $action_links .= $details['edit_acf_group'] . ' ';
-        
-        if ($action_links) {
-            $output .= '<div class="detail-item" style="border-top: 1px solid #dcdcde; padding-top: 8px; margin-top: 8px;">';
-            $output .= '<span class="detail-key">Actions:</span> ';
-            $output .= '<span class="detail-value">' . $action_links . '</span>';
+
+        // 3. Action links at the bottom
+        if (!empty($action_links)) {
+            $output .= '<div class="action-links">';
+            $output .= '<span class="detail-key">Quick Actions:</span> ';
+            $output .= implode(' ', $action_links);
             $output .= '</div>';
         }
-        
+
         $output .= '</div>';
+
         return $output;
     }
     
@@ -1617,4 +1705,79 @@ class Site_Logger {
         </style>
         <?php
     }
+
+    /**
+ * Beautiful rendering of content change details
+ */
+private static function render_beautiful_content_changes($data) {
+    $output = '<div class="content-change-box">';
+
+    // Summary line
+    $output .= '<div class="content-header">';
+    $output .= '<strong>Content Updated</strong>';
+
+    if (!empty($data['characters_changed'])) {
+        $ch = $data['characters_changed'];
+        $is_plus = strpos($ch, '+') === 0;
+        $num = abs((int) $ch);
+
+        $output .= ' <span class="' . ($is_plus ? 'added-chars' : 'removed-chars') . '">';
+        $output .= $is_plus ? '↑ +' : '↓ -';
+        $output .= $num . ' char' . ($num !== 1 ? 's' : '');
+        $output .= '</span>';
+    }
+
+    if (!empty($data['old_length']) && !empty($data['new_length'])) {
+        $output .= ' <small>(' . esc_html($data['old_length']) . ' → ' . esc_html($data['new_length']) . ')</small>';
+    }
+    $output .= '</div>';
+
+    // Detailed changes
+    if (!empty($data['detailed_changes'])) {
+        $dc = $data['detailed_changes'];
+
+        // Added content
+        if (!empty($dc['added']['sample'])) {
+            $sample = esc_html($dc['added']['sample']);
+            $count = $dc['added']['count'] ?? 0;
+
+            $output .= '<div class="diff-section added">';
+            $output .= '<div class="diff-title">＋ Added (' . $count . ' lines)</div>';
+            $output .= '<pre class="diff-pre">' . nl2br($sample) . '</pre>';
+            $output .= '</div>';
+        }
+
+        // Modified lines
+        if (!empty($dc['modified'])) {
+            $output .= '<div class="diff-section modified">';
+            $output .= '<div class="diff-title">✏️ Modified lines</div>';
+
+            foreach (array_slice($dc['modified'], 0, 4) as $mod) {  // limit to 4 for space
+                $output .= '<div class="mod-line">';
+                $output .= '<div class="line-info">Line ' . ($mod['line'] ?? '?') . ':</div>';
+                $output .= '<div><span class="old-text">' . esc_html($mod['old'] ?? '') . '</span></div>';
+                $output .= '<div><span class="new-text">' . esc_html($mod['new'] ?? '') . '</span></div>';
+                $output .= '</div>';
+            }
+
+            if (count($dc['modified']) > 4) {
+                $output .= '<div class="more-info">... and ' . (count($dc['modified']) - 4) . ' more modified lines</div>';
+            }
+            $output .= '</div>';
+        }
+    }
+
+    // Word changes summary (small)
+    if (!empty($data['word_changes']['added_words']['count'])) {
+        $aw = $data['word_changes']['added_words'];
+        $output .= '<div class="word-summary">';
+        $output .= '➕ ' . $aw['count'] . ' new words (e.g. "' . esc_html(substr($aw['sample'] ?? '', 0, 80)) . '…")';
+        $output .= '</div>';
+    }
+
+    $output .= '</div>';
+
+    return $output;
+}
+
 }
