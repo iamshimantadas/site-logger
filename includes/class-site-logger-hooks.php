@@ -14,6 +14,8 @@ class Site_Logger_Hooks
     private static $processed_terms = [];
     private static $stored_bulk_data = false;
 
+    private static $old_acf_field_groups = [];
+
 
     public static function init()
     {
@@ -53,7 +55,7 @@ class Site_Logger_Hooks
         if (function_exists('acf')) {
             add_action('acf/save_post', [$this, 'store_old_acf_data'], 5);
             // Store ACF field group data
-            add_action('acf/update_field_group', [$this, 'store_old_acf_field_group_data'], 5);
+            // add_action('acf/update_field_group', [$this, 'store_old_acf_field_group_data'], 5);
         }
 
         // Posts and Pages
@@ -143,9 +145,9 @@ class Site_Logger_Hooks
         // ACF field saves
         if (function_exists('acf')) {
             add_action('acf/save_post', [$this, 'log_acf_save'], 20);
-            add_action('acf/update_field_group', [$this, 'log_acf_field_group_update'], 20, 1);
-            add_action('acf/duplicate_field_group', [$this, 'log_acf_field_group_duplicate'], 10, 2);
-            add_action('acf/delete_field_group', [$this, 'log_acf_field_group_delete'], 10, 1);
+            // add_action('acf/update_field_group', [$this, 'log_acf_field_group_update'], 20, 1);
+            // add_action('acf/duplicate_field_group', [$this, 'log_acf_field_group_duplicate'], 10, 2);
+            // add_action('acf/delete_field_group', [$this, 'log_acf_field_group_delete'], 10, 1);
         }
 
         // Admin menu
@@ -175,6 +177,20 @@ class Site_Logger_Hooks
             remove_action('save_post', [$this, 'log_post_save'], 20);
             remove_action('updated_post_meta', [$this, 'log_post_meta_update'], 10);
         }
+
+        // ACF Field Group Tracking ONLY
+if (function_exists('acf')) {
+    // Capture old field group data before save
+    add_action('save_post_acf-field-group', [$this, 'capture_old_acf_field_group'], 5, 2);
+    
+    // Log field group updates, deletions, and duplications
+    add_action('acf/update_field_group', [$this, 'log_acf_field_group_update'], 10, 1);
+    add_action('acf/delete_field_group', [$this, 'log_acf_field_group_delete'], 10, 1);
+    add_action('acf/duplicate_field_group', [$this, 'log_acf_field_group_duplicate'], 10, 1);
+    
+    // Track individual field changes within field groups
+    add_action('save_post_acf-field', [$this, 'log_acf_field_changes'], 20, 3);
+}
 
     }
 
@@ -866,6 +882,7 @@ class Site_Logger_Hooks
 
             if (!$has_changes) {
                 $details['note'] = 'Post saved (no major changes detected)';
+                return;
             }
 
             unset(self::$old_post_data[$post_id]);
@@ -3287,184 +3304,184 @@ class Site_Logger_Hooks
     /**
      * FIXED: Enhanced ACF Field Group Update Logging
      */
-    public function log_acf_field_group_update($field_group)
-    {
-        $changes = [];
-        $field_changes = [];
-        $field_group_id = $field_group['ID'] ?? 0;
+    // public function log_acf_field_group_update($field_group)
+    // {
+    //     $changes = [];
+    //     $field_changes = [];
+    //     $field_group_id = $field_group['ID'] ?? 0;
 
-        // Get old field group data
-        $old_field_group = isset(self::$old_acf_data['field_groups'][$field_group['key']]) ?
-            self::$old_acf_data['field_groups'][$field_group['key']] : null;
+    //     // Get old field group data
+    //     $old_field_group = isset(self::$old_acf_data['field_groups'][$field_group['key']]) ?
+    //         self::$old_acf_data['field_groups'][$field_group['key']] : null;
 
-        if ($old_field_group) {
-            // 1. Basic field group settings
-            $basic_settings = [
-                'title',
-                'menu_order',
-                'position',
-                'style',
-                'label_placement',
-                'instruction_placement',
-                'description',
-                'active'
-            ];
+    //     if ($old_field_group) {
+    //         // 1. Basic field group settings
+    //         $basic_settings = [
+    //             'title',
+    //             'menu_order',
+    //             'position',
+    //             'style',
+    //             'label_placement',
+    //             'instruction_placement',
+    //             'description',
+    //             'active'
+    //         ];
 
-            foreach ($basic_settings as $setting) {
-                if (
-                    isset($old_field_group[$setting]) && isset($field_group[$setting]) &&
-                    $old_field_group[$setting] != $field_group[$setting]
-                ) {
+    //         foreach ($basic_settings as $setting) {
+    //             if (
+    //                 isset($old_field_group[$setting]) && isset($field_group[$setting]) &&
+    //                 $old_field_group[$setting] != $field_group[$setting]
+    //             ) {
 
-                    $old_val = $old_field_group[$setting];
-                    $new_val = $field_group[$setting];
+    //                 $old_val = $old_field_group[$setting];
+    //                 $new_val = $field_group[$setting];
 
-                    if (is_bool($old_val))
-                        $old_val = $old_val ? 'Yes' : 'No';
-                    if (is_bool($new_val))
-                        $new_val = $new_val ? 'Yes' : 'No';
+    //                 if (is_bool($old_val))
+    //                     $old_val = $old_val ? 'Yes' : 'No';
+    //                 if (is_bool($new_val))
+    //                     $new_val = $new_val ? 'Yes' : 'No';
 
-                    if (is_array($old_val))
-                        $old_val = implode(', ', $old_val);
-                    if (is_array($new_val))
-                        $new_val = implode(', ', $new_val);
+    //                 if (is_array($old_val))
+    //                     $old_val = implode(', ', $old_val);
+    //                 if (is_array($new_val))
+    //                     $new_val = implode(', ', $new_val);
 
-                    $changes[$setting] = [
-                        'old' => $old_val ?: '(empty)',
-                        'new' => $new_val ?: '(empty)'
-                    ];
-                }
-            }
+    //                 $changes[$setting] = [
+    //                     'old' => $old_val ?: '(empty)',
+    //                     'new' => $new_val ?: '(empty)'
+    //                 ];
+    //             }
+    //         }
 
-            // 2. Location rules - detailed comparison
-            if (isset($old_field_group['location']) && isset($field_group['location'])) {
-                $old_locations = $this->format_acf_locations($old_field_group['location']);
-                $new_locations = $this->format_acf_locations($field_group['location']);
+    //         // 2. Location rules - detailed comparison
+    //         if (isset($old_field_group['location']) && isset($field_group['location'])) {
+    //             $old_locations = $this->format_acf_locations($old_field_group['location']);
+    //             $new_locations = $this->format_acf_locations($field_group['location']);
 
-                if ($old_locations !== $new_locations) {
-                    $changes['location_rules'] = [
-                        'old' => $old_locations,
-                        'new' => $new_locations
-                    ];
-                }
-            }
+    //             if ($old_locations !== $new_locations) {
+    //                 $changes['location_rules'] = [
+    //                     'old' => $old_locations,
+    //                     'new' => $new_locations
+    //                 ];
+    //             }
+    //         }
 
-            // 3. Hide on screen settings
-            if (isset($old_field_group['hide_on_screen']) && isset($field_group['hide_on_screen'])) {
-                $old_hide = is_array($old_field_group['hide_on_screen']) ? $old_field_group['hide_on_screen'] : [];
-                $new_hide = is_array($field_group['hide_on_screen']) ? $field_group['hide_on_screen'] : [];
+    //         // 3. Hide on screen settings
+    //         if (isset($old_field_group['hide_on_screen']) && isset($field_group['hide_on_screen'])) {
+    //             $old_hide = is_array($old_field_group['hide_on_screen']) ? $old_field_group['hide_on_screen'] : [];
+    //             $new_hide = is_array($field_group['hide_on_screen']) ? $field_group['hide_on_screen'] : [];
 
-                $added = array_diff($new_hide, $old_hide);
-                $removed = array_diff($old_hide, $new_hide);
+    //             $added = array_diff($new_hide, $old_hide);
+    //             $removed = array_diff($old_hide, $new_hide);
 
-                if (!empty($added) || !empty($removed)) {
-                    $hide_changes = [];
-                    if (!empty($added)) {
-                        $hide_changes['added'] = array_values($added);
-                    }
-                    if (!empty($removed)) {
-                        $hide_changes['removed'] = array_values($removed);
-                    }
-                    $changes['hide_on_screen'] = $hide_changes;
-                }
-            }
+    //             if (!empty($added) || !empty($removed)) {
+    //                 $hide_changes = [];
+    //                 if (!empty($added)) {
+    //                     $hide_changes['added'] = array_values($added);
+    //                 }
+    //                 if (!empty($removed)) {
+    //                     $hide_changes['removed'] = array_values($removed);
+    //                 }
+    //                 $changes['hide_on_screen'] = $hide_changes;
+    //             }
+    //         }
 
-            // 4. Post type and taxonomy assignments
-            $this->check_acf_post_type_taxonomy_changes($old_field_group, $field_group, $changes);
+    //         // 4. Post type and taxonomy assignments
+    //         $this->check_acf_post_type_taxonomy_changes($old_field_group, $field_group, $changes);
 
-            // 5. Field changes - EXTENSIVE DETECTION
-            if (isset($old_field_group['fields']) && isset($field_group['fields'])) {
-                $old_fields_by_key = [];
-                $old_fields_by_name = [];
-                foreach ($old_field_group['fields'] as $field) {
-                    $old_fields_by_key[$field['key']] = $field;
-                    if (isset($field['name'])) {
-                        $old_fields_by_name[$field['name']] = $field;
-                    }
-                }
+    //         // 5. Field changes - EXTENSIVE DETECTION
+    //         if (isset($old_field_group['fields']) && isset($field_group['fields'])) {
+    //             $old_fields_by_key = [];
+    //             $old_fields_by_name = [];
+    //             foreach ($old_field_group['fields'] as $field) {
+    //                 $old_fields_by_key[$field['key']] = $field;
+    //                 if (isset($field['name'])) {
+    //                     $old_fields_by_name[$field['name']] = $field;
+    //                 }
+    //             }
 
-                $new_fields_by_key = [];
-                foreach ($field_group['fields'] as $field) {
-                    $new_fields_by_key[$field['key']] = $field;
-                }
+    //             $new_fields_by_key = [];
+    //             foreach ($field_group['fields'] as $field) {
+    //                 $new_fields_by_key[$field['key']] = $field;
+    //             }
 
-                // Track added fields
-                $added_fields = array_diff_key($new_fields_by_key, $old_fields_by_key);
-                foreach ($added_fields as $field_key => $field) {
-                    $field_label = $field['label'] ?? $field['name'] ?? 'Unnamed field';
-                    $field_changes[] = "➕ <strong>Added field:</strong> '{$field_label}' (Type: {$field['type']})";
-                }
+    //             // Track added fields
+    //             $added_fields = array_diff_key($new_fields_by_key, $old_fields_by_key);
+    //             foreach ($added_fields as $field_key => $field) {
+    //                 $field_label = $field['label'] ?? $field['name'] ?? 'Unnamed field';
+    //                 $field_changes[] = "➕ <strong>Added field:</strong> '{$field_label}' (Type: {$field['type']})";
+    //             }
 
-                // Track removed fields
-                $removed_fields = array_diff_key($old_fields_by_key, $new_fields_by_key);
-                foreach ($removed_fields as $field_key => $field) {
-                    $field_label = $field['label'] ?? $field['name'] ?? 'Unnamed field';
-                    $field_changes[] = "🗑️ <strong>Removed field:</strong> '{$field_label}' (Type: {$field['type']})";
-                }
+    //             // Track removed fields
+    //             $removed_fields = array_diff_key($old_fields_by_key, $new_fields_by_key);
+    //             foreach ($removed_fields as $field_key => $field) {
+    //                 $field_label = $field['label'] ?? $field['name'] ?? 'Unnamed field';
+    //                 $field_changes[] = "🗑️ <strong>Removed field:</strong> '{$field_label}' (Type: {$field['type']})";
+    //             }
 
-                // Track modified fields - CHECK EVERYTHING
-                foreach ($old_fields_by_key as $field_key => $old_field) {
-                    if (isset($new_fields_by_key[$field_key])) {
-                        $new_field = $new_fields_by_key[$field_key];
+    //             // Track modified fields - CHECK EVERYTHING
+    //             foreach ($old_fields_by_key as $field_key => $old_field) {
+    //                 if (isset($new_fields_by_key[$field_key])) {
+    //                     $new_field = $new_fields_by_key[$field_key];
 
-                        $field_identifier = $new_field['label'] ?? $old_field['label'] ??
-                            $new_field['name'] ?? $old_field['name'] ?? 'Unnamed field';
+    //                     $field_identifier = $new_field['label'] ?? $old_field['label'] ??
+    //                         $new_field['name'] ?? $old_field['name'] ?? 'Unnamed field';
 
-                        $field_modifications = $this->get_acf_field_modifications($old_field, $new_field);
+    //                     $field_modifications = $this->get_acf_field_modifications($old_field, $new_field);
 
-                        if (!empty($field_modifications)) {
-                            $field_changes[] = "✏️ <strong>Modified field '{$field_identifier}':</strong><br>" .
-                                implode('<br>', array_map(function ($item) {
-                                    return "&nbsp;&nbsp;&nbsp;&nbsp;• {$item}";
-                                }, $field_modifications));
-                        }
-                    }
-                }
+    //                     if (!empty($field_modifications)) {
+    //                         $field_changes[] = "✏️ <strong>Modified field '{$field_identifier}':</strong><br>" .
+    //                             implode('<br>', array_map(function ($item) {
+    //                                 return "&nbsp;&nbsp;&nbsp;&nbsp;• {$item}";
+    //                             }, $field_modifications));
+    //                     }
+    //                 }
+    //             }
 
-                if (!empty($field_changes)) {
-                    $changes['field_changes'] = $field_changes;
-                }
-            }
-        }
+    //             if (!empty($field_changes)) {
+    //                 $changes['field_changes'] = $field_changes;
+    //             }
+    //         }
+    //     }
 
-        $edit_url = $field_group_id ? admin_url('post.php?post=' . $field_group_id . '&action=edit') : '';
-        $details = [
-            'field_group' => $field_group['title'],
-            'key' => $field_group['key'],
-            'fields_count' => isset($field_group['fields']) ? count($field_group['fields']) : 0,
-        ];
+    //     $edit_url = $field_group_id ? admin_url('post.php?post=' . $field_group_id . '&action=edit') : '';
+    //     $details = [
+    //         'field_group' => $field_group['title'],
+    //         'key' => $field_group['key'],
+    //         'fields_count' => isset($field_group['fields']) ? count($field_group['fields']) : 0,
+    //     ];
 
-        if ($edit_url) {
-            $details['edit_acf_group'] = "<a href='" . esc_url($edit_url) . "' target='_blank'>🔧 Edit ACF Field Group</a>";
-        }
+    //     if ($edit_url) {
+    //         $details['edit_acf_group'] = "<a href='" . esc_url($edit_url) . "' target='_blank'>🔧 Edit ACF Field Group</a>";
+    //     }
 
-        if (!empty($changes)) {
-            $details = array_merge($details, $changes);
+    //     if (!empty($changes)) {
+    //         $details = array_merge($details, $changes);
 
-            // Add comprehensive summary
-            $field_changes_count = isset($changes['field_changes']) ? count($changes['field_changes']) : 0;
-            $setting_changes_count = count($changes) - ($field_changes_count > 0 ? 1 : 0);
+    //         // Add comprehensive summary
+    //         $field_changes_count = isset($changes['field_changes']) ? count($changes['field_changes']) : 0;
+    //         $setting_changes_count = count($changes) - ($field_changes_count > 0 ? 1 : 0);
 
-            $details['summary'] = "{$field_changes_count} field changes, {$setting_changes_count} setting changes";
-        } else {
-            $details['note'] = 'ACF field group saved (no changes detected)';
-        }
+    //         $details['summary'] = "{$field_changes_count} field changes, {$setting_changes_count} setting changes";
+    //     } else {
+    //         $details['note'] = 'ACF field group saved (no changes detected)';
+    //     }
 
-        Site_Logger::log(
-            'acf_field_group_updated',
-            'acf',
-            $field_group_id,
-            $field_group['title'],
-            $details,
-            'info'
-        );
+    //     Site_Logger::log(
+    //         'acf_field_group_updated',
+    //         'acf',
+    //         $field_group_id,
+    //         $field_group['title'],
+    //         $details,
+    //         'info'
+    //     );
 
-        // Store current data for next comparison
-        if (!isset(self::$old_acf_data['field_groups'])) {
-            self::$old_acf_data['field_groups'] = [];
-        }
-        self::$old_acf_data['field_groups'][$field_group['key']] = $field_group;
-    }
+    //     // Store current data for next comparison
+    //     if (!isset(self::$old_acf_data['field_groups'])) {
+    //         self::$old_acf_data['field_groups'] = [];
+    //     }
+    //     self::$old_acf_data['field_groups'][$field_group['key']] = $field_group;
+    // }
 
     /**
      * Check ACF post type and taxonomy changes
@@ -3525,118 +3542,118 @@ class Site_Logger_Hooks
     /**
      * Get ACF field modifications
      */
-    private function get_acf_field_modifications($old_field, $new_field)
-    {
-        $modifications = [];
+    // private function get_acf_field_modifications($old_field, $new_field)
+    // {
+    //     $modifications = [];
 
-        $field_properties = [
-            'label',
-            'name',
-            'type',
-            'required',
-            'default_value',
-            'instructions',
-            'placeholder',
-            'wrapper',
-            'choices',
-            'allow_null',
-            'multiple',
-            'ui',
-            'ajax',
-            'return_format',
-            'library',
-            'min',
-            'max',
-            'step',
-            'prepend',
-            'append',
-            'maxlength',
-            'rows',
-            'new_lines',
-            'layout',
-            'button_label',
-            'collapsed',
-            'conditional_logic',
-            'parent'
-        ];
+    //     $field_properties = [
+    //         'label',
+    //         'name',
+    //         'type',
+    //         'required',
+    //         'default_value',
+    //         'instructions',
+    //         'placeholder',
+    //         'wrapper',
+    //         'choices',
+    //         'allow_null',
+    //         'multiple',
+    //         'ui',
+    //         'ajax',
+    //         'return_format',
+    //         'library',
+    //         'min',
+    //         'max',
+    //         'step',
+    //         'prepend',
+    //         'append',
+    //         'maxlength',
+    //         'rows',
+    //         'new_lines',
+    //         'layout',
+    //         'button_label',
+    //         'collapsed',
+    //         'conditional_logic',
+    //         'parent'
+    //     ];
 
-        foreach ($field_properties as $prop) {
-            $old_val = $old_field[$prop] ?? '';
-            $new_val = $new_field[$prop] ?? '';
+    //     foreach ($field_properties as $prop) {
+    //         $old_val = $old_field[$prop] ?? '';
+    //         $new_val = $new_field[$prop] ?? '';
 
-            if ($prop === 'wrapper') {
-                if (is_array($old_val) && is_array($new_val)) {
-                    $wrapper_changes = [];
-                    if (
-                        isset($old_val['width']) && isset($new_val['width']) &&
-                        $old_val['width'] !== $new_val['width']
-                    ) {
-                        $wrapper_changes[] = "Wrapper width: {$old_val['width']}% → {$new_val['width']}%";
-                    }
-                    if (
-                        isset($old_val['class']) && isset($new_val['class']) &&
-                        $old_val['class'] !== $new_val['class']
-                    ) {
-                        $wrapper_changes[] = "Wrapper class: '{$old_val['class']}' → '{$new_val['class']}'";
-                    }
-                    if (!empty($wrapper_changes)) {
-                        $modifications = array_merge($modifications, $wrapper_changes);
-                    }
-                }
-                continue;
-            }
+    //         if ($prop === 'wrapper') {
+    //             if (is_array($old_val) && is_array($new_val)) {
+    //                 $wrapper_changes = [];
+    //                 if (
+    //                     isset($old_val['width']) && isset($new_val['width']) &&
+    //                     $old_val['width'] !== $new_val['width']
+    //                 ) {
+    //                     $wrapper_changes[] = "Wrapper width: {$old_val['width']}% → {$new_val['width']}%";
+    //                 }
+    //                 if (
+    //                     isset($old_val['class']) && isset($new_val['class']) &&
+    //                     $old_val['class'] !== $new_val['class']
+    //                 ) {
+    //                     $wrapper_changes[] = "Wrapper class: '{$old_val['class']}' → '{$new_val['class']}'";
+    //                 }
+    //                 if (!empty($wrapper_changes)) {
+    //                     $modifications = array_merge($modifications, $wrapper_changes);
+    //                 }
+    //             }
+    //             continue;
+    //         }
 
-            if ($prop === 'choices' && is_array($old_val) && is_array($new_val)) {
-                if (serialize($old_val) !== serialize($new_val)) {
-                    $added = array_diff_assoc($new_val, $old_val);
-                    $removed = array_diff_assoc($old_val, $new_val);
+    //         if ($prop === 'choices' && is_array($old_val) && is_array($new_val)) {
+    //             if (serialize($old_val) !== serialize($new_val)) {
+    //                 $added = array_diff_assoc($new_val, $old_val);
+    //                 $removed = array_diff_assoc($old_val, $new_val);
 
-                    if (!empty($added) || !empty($removed)) {
-                        $choice_changes = [];
-                        if (!empty($added)) {
-                            foreach ($added as $key => $value) {
-                                $choice_changes[] = "Added choice: '{$key}' => '{$value}'";
-                            }
-                        }
-                        if (!empty($removed)) {
-                            foreach ($removed as $key => $value) {
-                                $choice_changes[] = "Removed choice: '{$key}' => '{$value}'";
-                            }
-                        }
-                        $modifications[] = "Choices changed";
-                        $modifications = array_merge($modifications, $choice_changes);
-                    }
-                }
-                continue;
-            }
+    //                 if (!empty($added) || !empty($removed)) {
+    //                     $choice_changes = [];
+    //                     if (!empty($added)) {
+    //                         foreach ($added as $key => $value) {
+    //                             $choice_changes[] = "Added choice: '{$key}' => '{$value}'";
+    //                         }
+    //                     }
+    //                     if (!empty($removed)) {
+    //                         foreach ($removed as $key => $value) {
+    //                             $choice_changes[] = "Removed choice: '{$key}' => '{$value}'";
+    //                         }
+    //                     }
+    //                     $modifications[] = "Choices changed";
+    //                     $modifications = array_merge($modifications, $choice_changes);
+    //                 }
+    //             }
+    //             continue;
+    //         }
 
-            if ($prop === 'conditional_logic' && is_array($old_val) && is_array($new_val)) {
-                if (serialize($old_val) !== serialize($new_val)) {
-                    $modifications[] = "Conditional logic updated";
-                }
-                continue;
-            }
+    //         if ($prop === 'conditional_logic' && is_array($old_val) && is_array($new_val)) {
+    //             if (serialize($old_val) !== serialize($new_val)) {
+    //                 $modifications[] = "Conditional logic updated";
+    //             }
+    //             continue;
+    //         }
 
-            if (empty($old_val) && empty($new_val))
-                continue;
+    //         if (empty($old_val) && empty($new_val))
+    //             continue;
 
-            if (is_array($old_val) && is_array($new_val)) {
-                if (serialize($old_val) !== serialize($new_val)) {
-                    $modifications[] = ucfirst($prop) . " changed";
-                }
-            } elseif ($old_val !== $new_val) {
-                $old_display = is_bool($old_val) ? ($old_val ? 'Yes' : 'No') : $old_val;
-                $new_display = is_bool($new_val) ? ($new_val ? 'Yes' : 'No') : $new_val;
+    //         if (is_array($old_val) && is_array($new_val)) {
+    //             if (serialize($old_val) !== serialize($new_val)) {
+    //                 $modifications[] = ucfirst($prop) . " changed";
+    //             }
+    //         } elseif ($old_val !== $new_val) {
+    //             $old_display = is_bool($old_val) ? ($old_val ? 'Yes' : 'No') : $old_val;
+    //             $new_display = is_bool($new_val) ? ($new_val ? 'Yes' : 'No') : $new_val;
 
-                $old_display = $old_display ?: '(empty)';
-                $new_display = $new_display ?: '(empty)';
+    //             $old_display = $old_display ?: '(empty)';
+    //             $new_display = $new_display ?: '(empty)';
 
-                $modifications[] = ucfirst($prop) . ": '{$old_display}' → '{$new_display}'";
-            }
-        }
+    //             $modifications[] = ucfirst($prop) . ": '{$old_display}' → '{$new_display}'";
+    //         }
+    //     }
 
-        return $modifications;
-    }
+    //     return $modifications;
+    // }
 
     private function format_acf_locations($locations)
     {
@@ -3713,41 +3730,41 @@ class Site_Logger_Hooks
         return !empty($location_strings) ? implode(' OR ', $location_strings) : 'No location rules';
     }
 
-    public function log_acf_field_group_duplicate($new_field_group, $old_field_group)
-    {
-        $details = [
-            'original' => $old_field_group['title'],
-            'duplicate' => $new_field_group['title'],
-            'action' => 'ACF Field Group duplicated'
-        ];
+    // public function log_acf_field_group_duplicate($new_field_group, $old_field_group)
+    // {
+    //     $details = [
+    //         'original' => $old_field_group['title'],
+    //         'duplicate' => $new_field_group['title'],
+    //         'action' => 'ACF Field Group duplicated'
+    //     ];
 
-        Site_Logger::log(
-            'acf_field_group_duplicated',
-            'acf',
-            0,
-            $new_field_group['title'],
-            $details,
-            'info'
-        );
-    }
+    //     Site_Logger::log(
+    //         'acf_field_group_duplicated',
+    //         'acf',
+    //         0,
+    //         $new_field_group['title'],
+    //         $details,
+    //         'info'
+    //     );
+    // }
 
-    public function log_acf_field_group_delete($field_group)
-    {
-        $details = [
-            'field_group' => $field_group['title'],
-            'key' => $field_group['key'],
-            'action' => 'ACF Field Group deleted'
-        ];
+    // public function log_acf_field_group_delete($field_group)
+    // {
+    //     $details = [
+    //         'field_group' => $field_group['title'],
+    //         'key' => $field_group['key'],
+    //         'action' => 'ACF Field Group deleted'
+    //     ];
 
-        Site_Logger::log(
-            'acf_field_group_deleted',
-            'acf',
-            0,
-            $field_group['title'],
-            $details,
-            'warning'
-        );
-    }
+    //     Site_Logger::log(
+    //         'acf_field_group_deleted',
+    //         'acf',
+    //         0,
+    //         $field_group['title'],
+    //         $details,
+    //         'warning'
+    //     );
+    // }
 
     private function format_field_value($value, $field_type = 'text')
     {
@@ -5218,5 +5235,749 @@ private function detect_brute_force($ip) {
 
         return $output;
     }
+
+    /** acf field  */
+
+    /**
+ * Capture old ACF field group data before it's updated
+ */
+public function capture_old_acf_field_group($post_id, $post) {
+    // Skip autosaves, revisions, and new drafts
+    if (wp_is_post_autosave($post_id) || wp_is_post_revision($post_id) || $post->post_status === 'auto-draft') {
+        return;
+    }
+    
+    // Get the field group key from post name
+    $key = $post->post_name;
+    if (!$key) {
+        return;
+    }
+    
+    // Get current field group data from database (BEFORE the update)
+    $old_field_group = acf_get_field_group($key);
+    if (!$old_field_group || !is_array($old_field_group)) {
+        return;
+    }
+    
+    // Store the complete field group configuration
+    self::$old_acf_field_groups[$key] = [
+        'title' => $old_field_group['title'] ?? '',
+        'description' => $old_field_group['description'] ?? '',
+        'position' => $old_field_group['position'] ?? '',
+        'active' => $old_field_group['active'] ?? 1,
+        'location' => $old_field_group['location'] ?? [],
+        'menu_order' => $old_field_group['menu_order'] ?? 0,
+        'style' => $old_field_group['style'] ?? 'default',
+        'label_placement' => $old_field_group['label_placement'] ?? 'top',
+        'instruction_placement' => $old_field_group['instruction_placement'] ?? 'label',
+        'hide_on_screen' => $old_field_group['hide_on_screen'] ?? [],
+        'fields' => []
+    ];
+    
+    // Get all fields in this field group
+    $fields = acf_get_fields($key);
+    if ($fields && is_array($fields)) {
+        foreach ($fields as $field) {
+            $field_key = $field['key'] ?? '';
+            if ($field_key) {
+                // Store essential field properties
+                self::$old_acf_field_groups[$key]['fields'][$field_key] = [
+                    'name' => $field['name'] ?? '',
+                    'label' => $field['label'] ?? '',
+                    'type' => $field['type'] ?? '',
+                    'required' => $field['required'] ?? 0,
+                    'default_value' => $field['default_value'] ?? '',
+                    'placeholder' => $field['placeholder'] ?? '',
+                    'instructions' => $field['instructions'] ?? '',
+                    'conditional_logic' => $field['conditional_logic'] ?? 0,
+                    'wrapper' => $field['wrapper'] ?? [],
+                    'choices' => $field['choices'] ?? [],
+                    'allow_null' => $field['allow_null'] ?? 0,
+                    'multiple' => $field['multiple'] ?? 0,
+                    'ui' => $field['ui'] ?? 0,
+                    'ajax' => $field['ajax'] ?? 0,
+                    'return_format' => $field['return_format'] ?? '',
+                    'library' => $field['library'] ?? 'all',
+                    'min' => $field['min'] ?? '',
+                    'max' => $field['max'] ?? '',
+                    'step' => $field['step'] ?? '',
+                    'prepend' => $field['prepend'] ?? '',
+                    'append' => $field['append'] ?? '',
+                    'maxlength' => $field['maxlength'] ?? '',
+                    'rows' => $field['rows'] ?? '',
+                    'new_lines' => $field['new_lines'] ?? '',
+                    'layout' => $field['layout'] ?? '',
+                    'button_label' => $field['button_label'] ?? '',
+                    'collapsed' => $field['collapsed'] ?? 0,
+                    'menu_order' => $field['menu_order'] ?? 0,
+                ];
+            }
+        }
+    }
+}
+
+/**
+ * Log ACF field group updates with detailed change tracking
+ */
+public function log_acf_field_group_update($field_group) {
+    if (!is_array($field_group) || !isset($field_group['title'])) {
+        return;
+    }
+    
+    $key = $field_group['key'] ?? '';
+    $action = isset($field_group['ID']) && $field_group['ID'] ? 'updated' : 'created';
+    $severity = $action === 'created' ? 'notice' : 'info';
+    
+    $changes = [];
+    $change_summary = [];
+    
+    // If this is an update and we have old data, compare changes
+    if ($action === 'updated' && $key && isset(self::$old_acf_field_groups[$key])) {
+        $old_data = self::$old_acf_field_groups[$key];
+        
+        // 1. Compare basic field group properties
+        $basic_properties = [
+            'title' => 'Title',
+            'description' => 'Description',
+            'position' => 'Position',
+            'style' => 'Style',
+            'label_placement' => 'Label Placement',
+            'instruction_placement' => 'Instruction Placement'
+        ];
+        
+        foreach ($basic_properties as $prop => $label) {
+            $old_val = $old_data[$prop] ?? '';
+            $new_val = $field_group[$prop] ?? '';
+            
+            if ($old_val !== $new_val) {
+                $changes[$prop] = [
+                    'old' => $old_val ?: '(empty)',
+                    'new' => $new_val ?: '(empty)'
+                ];
+                $change_summary[] = "{$label}: '{$old_val}' → '{$new_val}'";
+            }
+        }
+        
+        // 2. Check active status
+        if (isset($field_group['active']) && isset($old_data['active']) && $old_data['active'] != $field_group['active']) {
+            $changes['active'] = [
+                'old' => $old_data['active'] ? 'Active' : 'Inactive',
+                'new' => $field_group['active'] ? 'Active' : 'Inactive'
+            ];
+            $change_summary[] = $field_group['active'] ? 'activated' : 'deactivated';
+        }
+        
+        // 3. Check menu order
+        if (isset($field_group['menu_order']) && isset($old_data['menu_order']) && $old_data['menu_order'] != $field_group['menu_order']) {
+            $changes['menu_order'] = [
+                'old' => $old_data['menu_order'],
+                'new' => $field_group['menu_order']
+            ];
+            $change_summary[] = "order: {$old_data['menu_order']} → {$field_group['menu_order']}";
+        }
+        
+        // 4. Check location rules
+        if (isset($field_group['location']) && isset($old_data['location'])) {
+            $old_location_str = $this->format_acf_location_rules($old_data['location']);
+            $new_location_str = $this->format_acf_location_rules($field_group['location']);
+            
+            if ($old_location_str !== $new_location_str) {
+                $changes['location'] = [
+                    'old' => $old_location_str,
+                    'new' => $new_location_str
+                ];
+                $change_summary[] = "location rules changed";
+            }
+        }
+        
+        // 5. Check hide on screen settings
+        if (isset($field_group['hide_on_screen']) && isset($old_data['hide_on_screen'])) {
+            $old_hide = is_array($old_data['hide_on_screen']) ? $old_data['hide_on_screen'] : [];
+            $new_hide = is_array($field_group['hide_on_screen']) ? $field_group['hide_on_screen'] : [];
+            
+            $added = array_diff($new_hide, $old_hide);
+            $removed = array_diff($old_hide, $new_hide);
+            
+            if (!empty($added) || !empty($removed)) {
+                $hide_changes = [];
+                if (!empty($added)) {
+                    $hide_changes['added'] = array_values($added);
+                    $change_summary[] = "hide on screen added: " . implode(', ', $added);
+                }
+                if (!empty($removed)) {
+                    $hide_changes['removed'] = array_values($removed);
+                    $change_summary[] = "hide on screen removed: " . implode(', ', $removed);
+                }
+                $changes['hide_on_screen'] = $hide_changes;
+            }
+        }
+        
+        // 6. FIELD-LEVEL CHANGES (Most important!)
+        $current_fields = acf_get_fields($key);
+        $old_fields = $old_data['fields'] ?? [];
+        
+        $field_changes = [
+            'added' => [],
+            'deleted' => [],
+            'modified' => []
+        ];
+        
+        if ($current_fields && is_array($current_fields)) {
+            $current_fields_by_key = [];
+            foreach ($current_fields as $field) {
+                if (isset($field['key'])) {
+                    $current_fields_by_key[$field['key']] = $field;
+                }
+            }
+            
+            // Check for deleted fields
+            foreach ($old_fields as $old_field_key => $old_field_data) {
+                if (!isset($current_fields_by_key[$old_field_key])) {
+                    $field_changes['deleted'][] = [
+                        'label' => $old_field_data['label'],
+                        'name' => $old_field_data['name'],
+                        'type' => $old_field_data['type']
+                    ];
+                }
+            }
+            
+            // Check for added or modified fields
+            foreach ($current_fields_by_key as $field_key => $current_field) {
+                if (!isset($old_fields[$field_key])) {
+                    // New field added
+                    $field_changes['added'][] = [
+                        'label' => $current_field['label'] ?? '',
+                        'name' => $current_field['name'] ?? '',
+                        'type' => $current_field['type'] ?? ''
+                    ];
+                } else {
+                    // Existing field - check for modifications
+                    $old_field = $old_fields[$field_key];
+                    $field_modifications = $this->get_acf_field_modifications($old_field, $current_field);
+                    
+                    if (!empty($field_modifications)) {
+                        $field_changes['modified'][] = [
+                            'label' => $current_field['label'] ?? $old_field['label'],
+                            'name' => $current_field['name'] ?? $old_field['name'],
+                            'modifications' => $field_modifications
+                        ];
+                    }
+                }
+            }
+        }
+        
+        // Add field changes to main changes array if any
+        if (!empty($field_changes['added']) || !empty($field_changes['deleted']) || !empty($field_changes['modified'])) {
+            $changes['field_changes'] = $field_changes;
+            
+            // Add to summary
+            if (!empty($field_changes['added'])) {
+                $added_count = count($field_changes['added']);
+                $added_labels = array_column($field_changes['added'], 'label');
+                $change_summary[] = "➕ {$added_count} field(s) added: " . implode(', ', $added_labels);
+            }
+            
+            if (!empty($field_changes['deleted'])) {
+                $deleted_count = count($field_changes['deleted']);
+                $deleted_labels = array_column($field_changes['deleted'], 'label');
+                $change_summary[] = "🗑️ {$deleted_count} field(s) deleted: " . implode(', ', $deleted_labels);
+            }
+            
+            if (!empty($field_changes['modified'])) {
+                $modified_count = count($field_changes['modified']);
+                $change_summary[] = "✏️ {$modified_count} field(s) modified";
+            }
+        }
+        
+        // Clean up stored data
+        unset(self::$old_acf_field_groups[$key]);
+    }
+    
+    // Prepare log details
+    $edit_url = isset($field_group['ID']) ? admin_url('post.php?post=' . $field_group['ID'] . '&action=edit') : '';
+    
+    $details = [
+        'field_group' => $field_group['title'],
+        'key' => $key,
+        'action' => $action,
+        'location' => $this->format_acf_location_rules($field_group['location'] ?? []),
+        'fields_count' => count(acf_get_fields($key) ?: [])
+    ];
+    
+    if ($edit_url) {
+        $details['edit_acf_group'] = "<a href='" . esc_url($edit_url) . "' target='_blank'>🔧 Edit Field Group</a>";
+    }
+    
+    if (!empty($changes)) {
+        $details['changes'] = $changes;
+        $details['summary'] = implode(' • ', $change_summary);
+        
+        // Create beautiful display of changes
+        $details['changes_display'] = $this->format_acf_changes_for_display($changes);
+    } else {
+        $details['note'] = 'Field group saved (no changes detected)';
+    }
+    
+    Site_Logger::log(
+        'acf_field_group_updated',
+        'acf',
+        $field_group['ID'] ?? 0,
+        $field_group['title'],
+        $details,
+        $severity
+    );
+}
+
+/**
+ * Get detailed modifications for an ACF field
+ */
+private function get_acf_field_modifications($old_field, $new_field) {
+    $modifications = [];
+    
+    // Properties to compare
+    $properties = [
+        'label' => 'Label',
+        'name' => 'Name',
+        'type' => 'Type',
+        'required' => 'Required',
+        'default_value' => 'Default Value',
+        'placeholder' => 'Placeholder',
+        'instructions' => 'Instructions',
+        'conditional_logic' => 'Conditional Logic',
+        'wrapper' => 'Wrapper Settings',
+        'choices' => 'Choices',
+        'allow_null' => 'Allow Null',
+        'multiple' => 'Multiple',
+        'ui' => 'Stylized UI',
+        'ajax' => 'AJAX',
+        'return_format' => 'Return Format',
+        'library' => 'Library',
+        'min' => 'Minimum',
+        'max' => 'Maximum',
+        'step' => 'Step',
+        'prepend' => 'Prepend',
+        'append' => 'Append',
+        'maxlength' => 'Max Length',
+        'rows' => 'Rows',
+        'new_lines' => 'New Lines',
+        'layout' => 'Layout',
+        'button_label' => 'Button Label',
+        'collapsed' => 'Collapsed'
+    ];
+    
+    foreach ($properties as $prop => $label) {
+        $old_val = $old_field[$prop] ?? '';
+        $new_val = $new_field[$prop] ?? '';
+        
+        // Special handling for different data types
+        if ($prop === 'conditional_logic') {
+            $old_has_logic = !empty($old_val);
+            $new_has_logic = !empty($new_val);
+            if ($old_has_logic !== $new_has_logic) {
+                $modifications[$prop] = [
+                    'old' => $old_has_logic ? 'Enabled' : 'Disabled',
+                    'new' => $new_has_logic ? 'Enabled' : 'Disabled'
+                ];
+            }
+        } elseif ($prop === 'required' || $prop === 'allow_null' || $prop === 'multiple' || $prop === 'ui' || $prop === 'ajax' || $prop === 'collapsed') {
+            if ((bool)$old_val !== (bool)$new_val) {
+                $modifications[$prop] = [
+                    'old' => $old_val ? 'Yes' : 'No',
+                    'new' => $new_val ? 'Yes' : 'No'
+                ];
+            }
+        } elseif ($prop === 'choices' && is_array($old_val) && is_array($new_val)) {
+            if (serialize($old_val) !== serialize($new_val)) {
+                $added = array_diff_assoc($new_val, $old_val);
+                $removed = array_diff_assoc($old_val, $new_val);
+                
+                if (!empty($added) || !empty($removed)) {
+                    $choice_changes = [];
+                    if (!empty($added)) {
+                        $choice_changes['added'] = array_keys($added);
+                    }
+                    if (!empty($removed)) {
+                        $choice_changes['removed'] = array_keys($removed);
+                    }
+                    $modifications[$prop] = $choice_changes;
+                }
+            }
+        } elseif ($prop === 'wrapper') {
+            if (is_array($old_val) && is_array($new_val)) {
+                $wrapper_changes = [];
+                if (($old_val['width'] ?? '') !== ($new_val['width'] ?? '')) {
+                    $wrapper_changes['width'] = [
+                        'old' => $old_val['width'] ?? 'auto',
+                        'new' => $new_val['width'] ?? 'auto'
+                    ];
+                }
+                if (($old_val['class'] ?? '') !== ($new_val['class'] ?? '')) {
+                    $wrapper_changes['class'] = [
+                        'old' => $old_val['class'] ?? '(empty)',
+                        'new' => $new_val['class'] ?? '(empty)'
+                    ];
+                }
+                if (!empty($wrapper_changes)) {
+                    $modifications[$prop] = $wrapper_changes;
+                }
+            }
+        } elseif ($old_val !== $new_val) {
+            $modifications[$prop] = [
+                'old' => $old_val ?: '(empty)',
+                'new' => $new_val ?: '(empty)'
+            ];
+        }
+    }
+    
+    return $modifications;
+}
+
+/**
+ * Format ACF location rules for display
+ */
+private function format_acf_location_rules($location_rules) {
+    if (empty($location_rules) || !is_array($location_rules)) {
+        return '(none)';
+    }
+    
+    $formatted = [];
+    
+    foreach ($location_rules as $group) {
+        $group_rules = [];
+        
+        foreach ($group as $rule) {
+            if (!isset($rule['param']) || !isset($rule['operator']) || !isset($rule['value'])) {
+                continue;
+            }
+            
+            $param_label = str_replace('_', ' ', $rule['param']);
+            $operator_label = $rule['operator'] === '==' ? 'is' : 'is not';
+            $value_label = $rule['value'];
+            
+            // Human-readable labels
+            if ($rule['param'] === 'post_type') {
+                $post_type_obj = get_post_type_object($rule['value']);
+                if ($post_type_obj) {
+                    $value_label = $post_type_obj->labels->singular_name;
+                }
+            } elseif ($rule['param'] === 'page_template') {
+                $value_label = basename($rule['value'], '.php');
+            } elseif ($rule['param'] === 'user_role') {
+                $value_label = ucfirst(str_replace('_', ' ', $rule['value']));
+            } elseif ($rule['param'] === 'post_format') {
+                $value_label = ucfirst(str_replace('_', ' ', $rule['value']));
+            } elseif ($rule['param'] === 'post_category' || $rule['param'] === 'post_taxonomy') {
+                $term = get_term($rule['value']);
+                $value_label = $term && !is_wp_error($term) ? $term->name : 'Term ID: ' . $rule['value'];
+            } elseif ($rule['param'] === 'page_type') {
+                $page_types = [
+                    'front_page' => 'Front Page',
+                    'posts_page' => 'Posts Page',
+                    'top_level' => 'Top Level',
+                    'parent' => 'Parent',
+                    'child' => 'Child'
+                ];
+                $value_label = $page_types[$rule['value']] ?? $rule['value'];
+            }
+            
+            $group_rules[] = "<strong>{$param_label}</strong> {$operator_label} <code>{$value_label}</code>";
+        }
+        
+        if (!empty($group_rules)) {
+            $formatted[] = implode(' <strong>AND</strong> ', $group_rules);
+        }
+    }
+    
+    return !empty($formatted) ? implode(' <strong>OR</strong> ', $formatted) : '(none)';
+}
+
+/**
+ * Format ACF changes for beautiful display
+ */
+private function format_acf_changes_for_display($changes) {
+    $output = '';
+    
+    // 1. Basic properties changes
+    $basic_props = ['title', 'description', 'position', 'style', 'label_placement', 'instruction_placement', 'active', 'menu_order'];
+    $basic_changes = [];
+    
+    foreach ($basic_props as $prop) {
+        if (isset($changes[$prop])) {
+            $basic_changes[] = $changes[$prop];
+        }
+    }
+    
+    if (!empty($basic_changes)) {
+        $output .= "<div class='acf-section basic-properties'>";
+        $output .= "<h4>📋 Field Group Settings</h4>";
+        foreach ($basic_changes as $prop => $change) {
+            $prop_label = ucwords(str_replace('_', ' ', $prop));
+            $output .= "<div class='change-item'>";
+            $output .= "<span class='change-label'>{$prop_label}:</span> ";
+            $output .= "<span class='change-old'>" . esc_html($change['old']) . "</span> ";
+            $output .= "→ ";
+            $output .= "<span class='change-new'>" . esc_html($change['new']) . "</span>";
+            $output .= "</div>";
+        }
+        $output .= "</div>";
+    }
+    
+    // 2. Location rules changes
+    if (isset($changes['location'])) {
+        $output .= "<div class='acf-section location-rules'>";
+        $output .= "<h4>📍 Location Rules</h4>";
+        $output .= "<div class='change-old'><strong>Old:</strong> " . $changes['location']['old'] . "</div>";
+        $output .= "<div class='change-new'><strong>New:</strong> " . $changes['location']['new'] . "</div>";
+        $output .= "</div>";
+    }
+    
+    // 3. Hide on screen changes
+    if (isset($changes['hide_on_screen'])) {
+        $output .= "<div class='acf-section hide-on-screen'>";
+        $output .= "<h4>👁️ Visibility Settings</h4>";
+        if (!empty($changes['hide_on_screen']['added'])) {
+            $output .= "<div class='change-added'>➕ <strong>Now hidden:</strong> " . 
+                      implode(', ', $changes['hide_on_screen']['added']) . "</div>";
+        }
+        if (!empty($changes['hide_on_screen']['removed'])) {
+            $output .= "<div class='change-removed'>➖ <strong>Now visible:</strong> " . 
+                      implode(', ', $changes['hide_on_screen']['removed']) . "</div>";
+        }
+        $output .= "</div>";
+    }
+    
+    // 4. Field changes (most important!)
+    if (isset($changes['field_changes'])) {
+        $field_changes = $changes['field_changes'];
+        
+        $output .= "<div class='acf-section field-changes'>";
+        $output .= "<h4>🔧 Field Changes</h4>";
+        
+        // Added fields
+        if (!empty($field_changes['added'])) {
+            $output .= "<div class='change-section added-fields'>";
+            $output .= "<h5>➕ Added Fields ({$field_changes['added']})</h5>";
+            foreach ($field_changes['added'] as $field) {
+                $field_icon = $this->get_field_type_icon($field['type']);
+                $output .= "<div class='field-item added'>";
+                $output .= "{$field_icon} <strong>{$field['label']}</strong> (<code>{$field['name']}</code>) - {$field['type']}";
+                $output .= "</div>";
+            }
+            $output .= "</div>";
+        }
+        
+        // Deleted fields
+        if (!empty($field_changes['deleted'])) {
+            $output .= "<div class='change-section deleted-fields'>";
+            $output .= "<h5>🗑️ Deleted Fields ({$field_changes['deleted']})</h5>";
+            foreach ($field_changes['deleted'] as $field) {
+                $field_icon = $this->get_field_type_icon($field['type']);
+                $output .= "<div class='field-item deleted'>";
+                $output .= "{$field_icon} <strong>{$field['label']}</strong> (<code>{$field['name']}</code>) - {$field['type']}";
+                $output .= "</div>";
+            }
+            $output .= "</div>";
+        }
+        
+        // Modified fields
+        if (!empty($field_changes['modified'])) {
+            $output .= "<div class='change-section modified-fields'>";
+            $output .= "<h5>✏️ Modified Fields ({$field_changes['modified']})</h5>";
+            foreach ($field_changes['modified'] as $field) {
+                $field_icon = $this->get_field_type_icon($this->detect_field_type_from_mods($field['modifications']));
+                $output .= "<div class='field-item modified'>";
+                $output .= "{$field_icon} <strong>{$field['label']}</strong>";
+                
+                foreach ($field['modifications'] as $prop => $mod) {
+                    $prop_label = ucwords(str_replace('_', ' ', $prop));
+                    $output .= "<div class='field-modification'>";
+                    $output .= "<span class='mod-prop'>{$prop_label}:</span> ";
+                    
+                    if (is_array($mod) && isset($mod['old']) && isset($mod['new'])) {
+                        $output .= "<span class='mod-old'>" . esc_html($mod['old']) . "</span> ";
+                        $output .= "→ ";
+                        $output .= "<span class='mod-new'>" . esc_html($mod['new']) . "</span>";
+                    } elseif (is_array($mod) && (isset($mod['added']) || isset($mod['removed']))) {
+                        if (!empty($mod['added'])) {
+                            $output .= "<span class='mod-added'>Added: " . implode(', ', $mod['added']) . "</span>";
+                        }
+                        if (!empty($mod['removed'])) {
+                            $output .= "<span class='mod-removed'>Removed: " . implode(', ', $mod['removed']) . "</span>";
+                        }
+                    }
+                    $output .= "</div>";
+                }
+                $output .= "</div>";
+            }
+            $output .= "</div>";
+        }
+        $output .= "</div>";
+    }
+    
+    return $output;
+}
+
+/**
+ * Get icon for field type
+ */
+private function get_field_type_icon($field_type) {
+    $icons = [
+        'text' => '📝',
+        'textarea' => '📄',
+        'number' => '🔢',
+        'email' => '📧',
+        'url' => '🔗',
+        'password' => '🔑',
+        'wysiwyg' => '✍️',
+        'image' => '🖼️',
+        'file' => '📎',
+        'gallery' => '🖼️🖼️',
+        'select' => '📋',
+        'checkbox' => '☑️',
+        'radio' => '🔘',
+        'true_false' => '✅',
+        'link' => '🔗',
+        'post_object' => '📄',
+        'page_link' => '📄🔗',
+        'relationship' => '↔️',
+        'taxonomy' => '🏷️',
+        'user' => '👤',
+        'google_map' => '🗺️',
+        'date_picker' => '📅',
+        'date_time_picker' => '📅⏰',
+        'time_picker' => '⏰',
+        'color_picker' => '🎨',
+        'message' => '💬',
+        'accordion' => '📑',
+        'tab' => '📑',
+        'group' => '📦',
+        'repeater' => '🔄',
+        'flexible_content' => '🧩',
+        'clone' => '📋',
+    ];
+    
+    return $icons[$field_type] ?? '🔧';
+}
+
+/**
+ * Detect field type from modifications
+ */
+private function detect_field_type_from_mods($modifications) {
+    if (isset($modifications['type'])) {
+        return $modifications['type']['new'];
+    }
+    return 'text';
+}
+
+/**
+ * Log ACF field group deletion
+ */
+public function log_acf_field_group_delete($field_group) {
+    if (!is_array($field_group) || !isset($field_group['title'])) {
+        return;
+    }
+    
+    $details = [
+        'field_group' => $field_group['title'],
+        'key' => $field_group['key'] ?? '',
+        'action' => 'ACF Field Group deleted'
+    ];
+    
+    Site_Logger::log(
+        'acf_field_group_deleted',
+        'acf',
+        $field_group['ID'] ?? 0,
+        $field_group['title'],
+        $details,
+        'warning'
+    );
+}
+
+/**
+ * Log ACF field group duplication
+ */
+public function log_acf_field_group_duplicate($field_group) {
+    if (!is_array($field_group) || !isset($field_group['title'])) {
+        return;
+    }
+    
+    $details = [
+        'field_group' => $field_group['title'],
+        'key' => $field_group['key'] ?? '',
+        'action' => 'ACF Field Group duplicated'
+    ];
+    
+    Site_Logger::log(
+        'acf_field_group_duplicated',
+        'acf',
+        $field_group['ID'] ?? 0,
+        $field_group['title'],
+        $details,
+        'info'
+    );
+}
+
+/**
+ * Log individual ACF field changes (when editing field definitions)
+ */
+public function log_acf_field_changes($post_id, $post, $update) {
+    // Skip autosaves, revisions, and new drafts
+    if (wp_is_post_autosave($post_id) || wp_is_post_revision($post_id) || $post->post_status === 'auto-draft') {
+        return;
+    }
+    
+    // Store field data to process on shutdown
+    $field_data = [
+        'ID' => $post_id,
+        'timestamp' => time(),
+        'update' => $update
+    ];
+    
+    add_action('shutdown', function() use ($field_data) {
+        $this->process_acf_field_update($field_data);
+    }, 999);
+}
+
+/**
+ * Process ACF field update on shutdown
+ */
+private function process_acf_field_update($field_data) {
+    $field = acf_get_field($field_data['ID']);
+    if (!$field || !is_array($field) || !isset($field['label'])) {
+        return;
+    }
+    
+    // Get parent field group info
+    $parent_group_title = 'Unknown Field Group';
+    if (isset($field['parent'])) {
+        $parent_group = acf_get_field_group($field['parent']);
+        if ($parent_group && isset($parent_group['title'])) {
+            $parent_group_title = $parent_group['title'];
+        }
+    }
+    
+    $action = $field_data['update'] ? 'updated' : 'created';
+    $severity = $action === 'created' ? 'notice' : 'info';
+    
+    $field_icon = $this->get_field_type_icon($field['type'] ?? 'text');
+    
+    $details = [
+        'field' => "{$field_icon} {$field['label']}",
+        'field_name' => $field['name'] ?? '',
+        'field_type' => $field['type'] ?? '',
+        'parent_group' => $parent_group_title,
+        'action' => "ACF field {$action}"
+    ];
+    
+    Site_Logger::log(
+        'acf_field_updated',
+        'acf',
+        $field_data['ID'],
+        $field['label'],
+        $details,
+        $severity
+    );
+}
+
 
 }

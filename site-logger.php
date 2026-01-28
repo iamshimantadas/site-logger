@@ -23,6 +23,8 @@ define('SITE_LOGGER_PLUGIN_BASENAME', plugin_basename(__FILE__));
 // Include plugin classes
 require_once SITE_LOGGER_PLUGIN_DIR . 'includes/class-site-logger.php';
 require_once SITE_LOGGER_PLUGIN_DIR . 'includes/class-site-logger-hooks.php';
+require_once SITE_LOGGER_PLUGIN_DIR . 'includes/class-site-logger-export.php';
+// require_once SITE_LOGGER_PLUGIN_DIR . 'includes/class-site-logger-acf-tracker.php';
 
 // Initialize plugin
 add_action('plugins_loaded', function() {
@@ -34,3 +36,10 @@ register_activation_hook(__FILE__, ['Site_Logger', 'activate']);
 
 // Deactivation hook
 register_deactivation_hook(__FILE__, ['Site_Logger', 'deactivate']);
+
+// Handle export requests early
+add_action('admin_init', function() {
+    if (isset($_GET['page']) && $_GET['page'] === 'site-logs' && isset($_GET['export_type'])) {
+        Site_Logger_Export::handle_export_request();
+    }
+});
