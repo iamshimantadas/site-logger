@@ -5,45 +5,26 @@ class Site_Logger_Export {
      * Handle export request
      */
     public static function handle_export_request() {
-        // // Check if export_type is set
-        // if (!isset($_GET['export_type']) || $_GET['page'] !== 'site-logs') {
-        //     return;
-        // }
-        
-        // // Verify nonce for security
-        // if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'site_logger_export')) {
-        //     wp_die('Security check failed');
-        // }
-        
-        // // Collect filters from request
-        // $filters = [];
-        // $filter_keys = ['severity', 'user_id', 'action', 'object_type', 'object_id', 'date_from', 'date_to', 'search'];
-        
-        // foreach ($filter_keys as $key) {
-        //     if (!empty($_GET[$key])) {
-        //         $filters[$key] = sanitize_text_field($_GET[$key]);
-        //     }
-        // }
         // Check if export_type is set
-    if (!isset($_GET['export_type']) || $_GET['page'] !== 'site-logs') {
-        return;
-    }
-    
-    // Verify nonce for security
-    if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'site_logger_export')) {
-        wp_die('Security check failed');
-    }
-    
-    // Collect filters from request (GET parameters)
-    $filters = [];
-    $filter_keys = ['severity', 'user_id', 'action', 'object_type', 'object_id', 'date_from', 'date_to', 'search'];
-    
-    foreach ($filter_keys as $key) {
-        if (!empty($_GET[$key])) {
-            $filters[$key] = sanitize_text_field($_GET[$key]);
+        if (!isset($_GET['export_type']) || $_GET['page'] !== 'site-logs') {
+            return;
         }
-    }
         
+        // Verify nonce for security
+        if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'site_logger_export')) {
+            wp_die('Security check failed');
+        }
+        
+        // Collect filters from request (GET parameters)
+        $filters = [];
+        $filter_keys = ['severity', 'user_id', 'action', 'object_type', 'object_id', 'date_from', 'date_to', 'search'];
+        
+        foreach ($filter_keys as $key) {
+            if (!empty($_GET[$key])) {
+                $filters[$key] = sanitize_text_field($_GET[$key]);
+            }
+        }
+            
         // Get all logs for export
         $logs = self::get_all_logs_for_export($filters);
         
@@ -76,7 +57,7 @@ class Site_Logger_Export {
     }
     
     /**
-     * Get all logs for export (no pagination limit)
+     * Get all logs for export (no pagination limit) with raw details
      */
     public static function get_all_logs_for_export($filters = []) {
         global $wpdb;
@@ -140,26 +121,11 @@ class Site_Logger_Export {
         
         $results = $wpdb->get_results($query);
         
-        // Decode details
-        foreach ($results as $log) {
-            if (!empty($log->details)) {
-                $decoded = json_decode($log->details, true);
-                if (json_last_error() === JSON_ERROR_NONE) {
-                    $log->details = $decoded;
-                } else {
-                    $unserialized = maybe_unserialize($log->details);
-                    if (is_array($unserialized) || is_object($unserialized)) {
-                        $log->details = (array)$unserialized;
-                    }
-                }
-            }
-        }
-        
         return $results;
     }
     
     /**
-     * Export logs to CSV
+     * Export logs to CSV with raw details
      */
     public static function export_csv($logs, $filters = []) {
         // Generate filename based on filters
@@ -220,35 +186,9 @@ class Site_Logger_Export {
         foreach ($logs as $log) {
             $user = $log->user_id ? get_user_by('id', $log->user_id) : null;
             $username = $user ? $user->display_name : 'System';
-            $details = $log->details;
-            $details_text = '';
             
-            if ($details && is_array($details)) {
-                $details_array = [];
-                foreach ($details as $key => $value) {
-                    if (is_array($value)) {
-                        if (isset($value['old']) && isset($value['new'])) {
-                            $details_array[] = $key . ': ' . $value['old'] . ' → ' . $value['new'];
-                        } elseif (isset($value['added']) || isset($value['removed'])) {
-                            if (!empty($value['added'])) {
-                                $added = is_array($value['added']) ? implode(', ', $value['added']) : $value['added'];
-                                $details_array[] = $key . ' added: ' . $added;
-                            }
-                            if (!empty($value['removed'])) {
-                                $removed = is_array($value['removed']) ? implode(', ', $value['removed']) : $value['removed'];
-                                $details_array[] = $key . ' removed: ' . $removed;
-                            }
-                        } else {
-                            $details_array[] = $key . ': ' . json_encode($value, JSON_UNESCAPED_UNICODE);
-                        }
-                    } else {
-                        // Strip HTML tags from details
-                        $clean_value = wp_strip_all_tags($value);
-                        $details_array[] = $key . ': ' . $clean_value;
-                    }
-                }
-                $details_text = implode('; ', $details_array);
-            }
+            // Get formatted details for CSV
+            $details_text = self::format_details_for_csv($log->details);
             
             fputcsv($output, [
                 $log->id,
@@ -270,29 +210,55 @@ class Site_Logger_Export {
     }
     
     /**
-     * Export logs to PDF
+     * Format details for CSV
      */
-    public static function export_pdf($logs, $filters = []) {
-        // Generate filename based on filters
-        $filename = 'site-logs-export';
+    private static function format_details_for_csv($details) {
+        if (empty($details)) {
+            return '';
+        }
         
-        if (!empty($filters)) {
-            $filter_parts = [];
-            if (!empty($filters['severity'])) {
-                $filter_parts[] = 'severity-' . $filters['severity'];
-            }
-            if (!empty($filters['date_from'])) {
-                $filter_parts[] = 'from-' . str_replace('-', '', $filters['date_from']);
-            }
-            if (!empty($filters['date_to'])) {
-                $filter_parts[] = 'to-' . str_replace('-', '', $filters['date_to']);
-            }
-            if (!empty($filter_parts)) {
-                $filename .= '-' . implode('-', $filter_parts);
+        // Decode JSON if it's a string
+        if (is_string($details)) {
+            $decoded = json_decode($details, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $details = $decoded;
             }
         }
         
-        $filename .= '-' . date('Y-m-d-H-i-s') . '.pdf';
+        if (!is_array($details) || empty($details)) {
+            return '';
+        }
+        
+        $lines = [];
+        foreach ($details as $key => $value) {
+            if (in_array($key, ['edit_post', 'view_post', 'view_revisions', 'edit_acf_group'])) {
+                continue; // Skip links
+            }
+            
+            if (is_array($value)) {
+                if (isset($value['old']) && isset($value['new'])) {
+                    $lines[] = ucfirst($key) . ': "' . $value['old'] . '" changed to "' . $value['new'] . '"';
+                } elseif (isset($value['added'])) {
+                    $added = is_array($value['added']) ? implode(', ', $value['added']) : $value['added'];
+                    $lines[] = ucfirst($key) . ': Added "' . $added . '"';
+                } elseif (isset($value['removed'])) {
+                    $removed = is_array($value['removed']) ? implode(', ', $value['removed']) : $value['removed'];
+                    $lines[] = ucfirst($key) . ': Removed "' . $removed . '"';
+                }
+            } else {
+                $lines[] = ucfirst($key) . ': ' . $value;
+            }
+        }
+        
+        return implode('; ', $lines);
+    }
+    
+    /**
+     * Export logs to PDF - Simple and complete
+     */
+    public static function export_pdf($logs, $filters = []) {
+        // Generate filename
+        $filename = 'site-logs-export-' . date('Y-m-d-H-i-s') . '.pdf';
         
         // Create HTML content for PDF
         $html = self::generate_pdf_html($logs, $filters);
@@ -300,12 +266,11 @@ class Site_Logger_Export {
         // Try to load DOMPDF
         $dompdf_loaded = false;
         
-        // Check multiple possible locations for DOMPDF
-        $plugin_dir = plugin_dir_path(__FILE__) . '../';
+        // Check for DOMPDF
         $possible_paths = [
-            $plugin_dir . 'vendor/autoload.php',
-            $plugin_dir . 'vendor/dompdf/dompdf/src/Dompdf.php',
-            $plugin_dir . 'vendor/dompdf/dompdf/autoload.inc.php',
+            plugin_dir_path(__FILE__) . '../vendor/autoload.php',
+            plugin_dir_path(__FILE__) . '../vendor/dompdf/dompdf/autoload.inc.php',
+            plugin_dir_path(__FILE__) . '../../dompdf/autoload.inc.php',
         ];
         
         foreach ($possible_paths as $path) {
@@ -316,67 +281,44 @@ class Site_Logger_Export {
             }
         }
         
-        if (!$dompdf_loaded) {
-            // Try to include DOMPDF directly if it's available via WordPress autoload
-            if (class_exists('Dompdf\Dompdf')) {
-                $dompdf_loaded = true;
-            }
+        if (!$dompdf_loaded && class_exists('Dompdf\Dompdf')) {
+            $dompdf_loaded = true;
         }
         
         if ($dompdf_loaded) {
             try {
-                // Clear any previous output
+                // Clear output
                 if (ob_get_level()) {
                     ob_end_clean();
                 }
                 
-                // Create DOMPDF options
+                // Create DOMPDF with simple options
                 $options = new Dompdf\Options();
-                $options->set('isRemoteEnabled', true);
-                $options->set('defaultFont', 'DejaVu Sans');
+                $options->set('isRemoteEnabled', false);
+                $options->set('defaultFont', 'Helvetica');
                 $options->set('isHtml5ParserEnabled', true);
                 $options->set('isPhpEnabled', true);
                 $options->set('defaultPaperSize', 'A4');
                 $options->set('defaultPaperOrientation', 'landscape');
                 
-                // Create DOMPDF instance
                 $dompdf = new Dompdf\Dompdf($options);
-                
-                // Load HTML
                 $dompdf->loadHtml($html);
-                
-                // Set paper size and orientation
                 $dompdf->setPaper('A4', 'landscape');
-                
-                // Render PDF
                 $dompdf->render();
                 
-                // Output PDF
                 $dompdf->stream($filename, [
                     'Attachment' => true,
-                    'compress' => true
+                    'compress' => false
                 ]);
                 
                 exit;
             } catch (Exception $e) {
-                error_log('Site Logger PDF Export Error: ' . $e->getMessage());
-                // Fall back to HTML download
-                self::fallback_html_export($html, $filename);
+                error_log('PDF Export Error: ' . $e->getMessage());
+                self::fallback_html_export($html, str_replace('.pdf', '.html', $filename));
             }
         } else {
-            // DOMPDF not available, show helpful message
-            wp_die(
-                '<h1>DOMPDF Library Not Found</h1>' .
-                '<p>To enable PDF export, please install DOMPDF:</p>' .
-                '<ol>' .
-                '<li>Install Composer if not already installed</li>' .
-                '<li>Run this command in your WordPress root directory:</li>' .
-                '<pre>composer require dompdf/dompdf</pre>' .
-                '<li>Or manually download DOMPDF from: <a href="https://github.com/dompdf/dompdf" target="_blank">github.com/dompdf/dompdf</a></li>' .
-                '<li>Place the DOMPDF library in the <code>vendor</code> folder inside the plugin directory</li>' .
-                '</ol>' .
-                '<p><a href="' . admin_url('admin.php?page=site-logs') . '">Return to logs</a></p>'
-            );
+            // DOMPDF not available, fall back to HTML
+            self::fallback_html_export($html, str_replace('.pdf', '.html', $filename));
         }
     }
     
@@ -384,9 +326,6 @@ class Site_Logger_Export {
      * Fallback HTML export when DOMPDF is not available
      */
     private static function fallback_html_export($html, $filename) {
-        $filename = str_replace('.pdf', '.html', $filename);
-        
-        // Clear any previous output
         if (ob_get_level()) {
             ob_end_clean();
         }
@@ -395,219 +334,313 @@ class Site_Logger_Export {
         header('Content-Disposition: attachment; filename="' . $filename . '"');
         header('Pragma: no-cache');
         header('Expires: 0');
-        header('Content-Length: ' . strlen($html));
         
         echo $html;
         exit;
     }
     
+    /**
+     * Generate HTML for PDF export - Simple and complete
+     */
+    private static function generate_pdf_html($logs, $filters = []) {
+        $site_name = get_bloginfo('name');
+        $current_date = date_i18n('F j, Y H:i:s');
+        $total_logs = count($logs);
+        
+        ob_start();
+        ?>
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Activity Log Report</title>
+            <style>
+                /* Very simple CSS for page fitting */
+                body {
+                    font-family: Arial, sans-serif;
+                    font-size: 9px;
+                    margin: 0;
+                    padding: 10px;
+                    color: #000;
+                }
+                h1 {
+                    font-size: 14px;
+                    margin: 5px 0;
+                    color: #333;
+                }
+                .info {
+                    font-size: 8px;
+                    color: #666;
+                    margin: 3px 0;
+                }
+                table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-top: 10px;
+                    font-size: 8px;
+                    table-layout: fixed;
+                }
+                th {
+                    background-color: #f2f2f2;
+                    border: 1px solid #ddd;
+                    padding: 6px;
+                    text-align: left;
+                    font-weight: bold;
+                }
+                td {
+                    border: 1px solid #ddd;
+                    padding: 5px;
+                    vertical-align: top;
+                    word-wrap: break-word;
+                }
+                tr:nth-child(even) {
+                    background-color: #f9f9f9;
+                }
+                .time {
+                    white-space: nowrap;
+                    width: 12%;
+                }
+                .severity {
+                    width: 8%;
+                    font-weight: bold;
+                }
+                .severity-info { color: #0066cc; }
+                .severity-warning { color: #cc6600; }
+                .severity-error { color: #cc0000; }
+                .severity-critical { color: #990000; }
+                .user {
+                    width: 12%;
+                }
+                .action {
+                    width: 15%;
+                }
+                .object {
+                    width: 15%;
+                }
+                .details {
+                    width: 38%;
+                    font-size: 8px;
+                    line-height: 1.2;
+                }
+                .detail-line {
+                    margin: 2px 0;
+                    padding: 1px 0;
+                }
+                .detail-label {
+                    font-weight: bold;
+                    color: #333;
+                }
+                .old-value {
+                    color: #cc0000;
+                    text-decoration: line-through;
+                }
+                .new-value {
+                    color: #006600;
+                    font-weight: bold;
+                }
+                .arrow {
+                    color: #666;
+                    margin: 0 5px;
+                }
+                .footer {
+                    text-align: center;
+                    margin-top: 15px;
+                    font-size: 8px;
+                    color: #999;
+                }
+                @media print {
+                    body {
+                        font-size: 8px;
+                    }
+                    table {
+                        font-size: 7px;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            <h1>Activity Log Report</h1>
+            <div class="info">Site: <?php echo esc_html($site_name); ?></div>
+            <div class="info">Generated: <?php echo esc_html($current_date); ?></div>
+            <div class="info">Total Records: <?php echo number_format($total_logs); ?></div>
+            
+            <?php if (!empty($filters)): ?>
+                <div class="info" style="background: #f5f5f5; padding: 5px; margin: 5px 0;">
+                    <strong>Filters:</strong> 
+                    <?php 
+                    $filter_items = [];
+                    foreach ($filters as $key => $value) {
+                        if (!empty($value)) {
+                            $filter_items[] = ucfirst($key) . ': ' . $value;
+                        }
+                    }
+                    echo implode(' | ', $filter_items);
+                    ?>
+                </div>
+            <?php endif; ?>
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th class="time">Time</th>
+                        <th class="severity">Level</th>
+                        <th class="user">User</th>
+                        <th class="action">Action</th>
+                        <th class="object">Object</th>
+                        <th class="details">Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (empty($logs)): ?>
+                        <tr>
+                            <td colspan="6" style="text-align: center; padding: 15px; color: #999;">
+                                No activity logs found
+                            </td>
+                        </tr>
+                    <?php else: ?>
+                        <?php foreach ($logs as $log): ?>
+                            <?php
+                            $user = $log->user_id ? get_user_by('id', $log->user_id) : null;
+                            $username = $user ? $user->display_name : 'System';
+                            $time = date_i18n('M j, H:i', strtotime($log->timestamp));
+                            $time_full = date_i18n('Y-m-d H:i:s', strtotime($log->timestamp));
+                            $object_text = self::get_object_display_text($log);
+                            ?>
+                            <tr>
+                                <td class="time" title="<?php echo esc_attr($time_full); ?>">
+                                    <?php echo esc_html($time); ?>
+                                </td>
+                                <td class="severity severity-<?php echo esc_attr($log->severity); ?>">
+                                    <?php echo esc_html(ucfirst($log->severity)); ?>
+                                </td>
+                                <td class="user">
+                                    <div><?php echo esc_html($username); ?></div>
+                                    <?php if ($log->user_id): ?>
+                                        <small style="color: #666;">ID: <?php echo $log->user_id; ?></small>
+                                    <?php endif; ?>
+                                </td>
+                                <td class="action"><?php echo esc_html(self::format_action($log->action)); ?></td>
+                                <td class="object"><?php echo esc_html($object_text); ?></td>
+                                <td class="details">
+                                    <?php echo self::format_detailed_info_for_pdf($log); ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+            
+            <div class="footer">
+                Page <?php echo '{PAGENO}'; ?> of <?php echo '{nbpg}'; ?> | Generated by Site Logger Plugin
+            </div>
+        </body>
+        </html>
+        <?php
+        return ob_get_clean();
+    }
     
     /**
- * Generate HTML for PDF export (Simplified version)
- */
-private static function generate_pdf_html($logs, $filters = []) {
-    $site_name = get_bloginfo('name');
-    $current_date = date_i18n('F j, Y H:i:s');
-    $total_logs = count($logs);
-    
-    ob_start();
-    ?>
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <title>Site Activity Logs Export</title>
-        <style>
-            @page {
-                margin: 15mm;
-                size: A4 landscape;
-            }
-            
-            body {
-                font-family: DejaVu Sans, Arial, Helvetica, sans-serif;
-                font-size: 10px;
-                line-height: 1.3;
-                margin: 0;
-                padding: 0;
-                color: #333;
-            }
-            
-            .header {
-                text-align: center;
-                margin-bottom: 15px;
-                padding-bottom: 10px;
-                border-bottom: 2px solid #2271b1;
-            }
-            
-            .header h1 {
-                color: #2271b1;
-                margin: 0 0 5px 0;
-                font-size: 20px;
-            }
-            
-            .header .meta {
-                color: #666;
-                font-size: 11px;
-                margin: 2px 0;
-            }
-            
-            table {
-                width: 100%;
-                border-collapse: collapse;
-                font-size: 9px;
-                word-wrap: break-word;
-            }
-            
-            table th {
-                background: #2271b1;
-                color: white;
-                text-align: left;
-                padding: 6px 8px;
-                border: 1px solid #1d5f96;
-                font-weight: bold;
-            }
-            
-            table td {
-                padding: 5px 7px;
-                border: 1px solid #ddd;
-                vertical-align: top;
-            }
-            
-            table tr:nth-child(even) {
-                background: #f9f9f9;
-            }
-            
-            .severity-badge {
-                display: inline-block;
-                padding: 2px 5px;
-                border-radius: 3px;
-                font-size: 8px;
-                font-weight: bold;
-                text-transform: uppercase;
-            }
-            
-            .severity-emergency { background: #dc3232; color: white; }
-            .severity-alert { background: #f56e28; color: white; }
-            .severity-critical { background: #d63638; color: white; }
-            .severity-error { background: #ff0000; color: white; }
-            .severity-warning { background: #ffb900; color: #000; }
-            .severity-notice { background: #00a0d2; color: white; }
-            .severity-info { background: #2271b1; color: white; }
-            .severity-debug { background: #a7aaad; color: #000; }
-            
-            .footer {
-                text-align: center;
-                margin-top: 20px;
-                padding-top: 10px;
-                border-top: 1px solid #ddd;
-                color: #666;
-                font-size: 9px;
-            }
-            
-            /* Simplified columns */
-            .col-time { width: 12%; }
-            .col-severity { width: 10%; }
-            .col-user { width: 12%; }
-            .col-action { width: 18%; }
-            .col-object { width: 18%; }
-            .col-details { width: 30%; }
-            
-            /* Ensure table fits */
-            table {
-                table-layout: auto;
-            }
-            
-            /* Print styles */
-            @media print {
-                body {
-                    font-size: 9px;
-                }
-                
-                table {
-                    font-size: 8px;
-                }
-                
-                table th, table td {
-                    padding: 4px 5px;
-                }
-            }
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <h1>Site Activity Logs Export</h1>
-            <div class="meta"><?php echo esc_html($site_name); ?></div>
-            <div class="meta">Generated: <?php echo esc_html($current_date); ?></div>
-            <div class="meta">Total Logs: <?php echo number_format($total_logs); ?></div>
-        </div>
+     * Format detailed information for PDF - Show more info
+     */
+    private static function format_detailed_info_for_pdf($log) {
+        $details = $log->details;
         
-        <table>
-            <thead>
-                <tr>
-                    <th class="col-time">Time</th>
-                    <th class="col-severity">Severity</th>
-                    <th class="col-user">User</th>
-                    <th class="col-action">Action</th>
-                    <th class="col-object">Object</th>
-                    <th class="col-details">Details</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if (empty($logs)): ?>
-                    <tr>
-                        <td colspan="6" style="text-align: center; padding: 15px;">
-                            No activity logs found.
-                        </td>
-                    </tr>
-                <?php else: ?>
-                    <?php foreach ($logs as $log): ?>
-                        <?php
-                        $user = $log->user_id ? get_user_by('id', $log->user_id) : null;
-                        $username = $user ? $user->display_name : 'System';
-                        $time = date_i18n('Y-m-d H:i', strtotime($log->timestamp));
-                        $object_text = self::get_object_display_text($log);
-                        $details_summary = '';
-                        
-                        if ($log->details && is_array($log->details)) {
-                            $details_array = [];
-                            foreach ($log->details as $key => $value) {
-                                if (is_array($value)) {
-                                    if (isset($value['old']) && isset($value['new'])) {
-                                        $details_array[] = $key . ': ' . substr($value['old'], 0, 8) . '→' . substr($value['new'], 0, 8);
-                                    }
-                                } else {
-                                    $details_array[] = $key . ': ' . substr($value, 0, 12);
-                                }
-                            }
-                            $details_summary = implode('; ', array_slice($details_array, 0, 3));
-                        }
-                        ?>
-                        <tr>
-                            <td class="col-time"><?php echo esc_html($time); ?></td>
-                            <td class="col-severity">
-                                <span class="severity-badge severity-<?php echo esc_attr($log->severity); ?>">
-                                    <?php echo esc_html(ucfirst($log->severity)); ?>
-                                </span>
-                            </td>
-                            <td class="col-user"><?php echo esc_html($username); ?></td>
-                            <td class="col-action"><?php echo esc_html(self::format_action($log->action)); ?></td>
-                            <td class="col-object"><?php echo esc_html(substr($object_text, 0, 25)); ?></td>
-                            <td class="col-details"><?php echo esc_html(substr($details_summary, 0, 40)); ?></td>
-                        </tr>
-                    <?php endforeach; ?>
-                <?php endif; ?>
-            </tbody>
-        </table>
-        
-        <div class="footer">
-            <p>Generated by Site Logger Plugin v<?php echo esc_html(SITE_LOGGER_VERSION); ?></p>
-            <p><?php echo esc_url(get_site_url()); ?></p>
-        </div>
-    </body>
-    </html>
-    <?php
-    return ob_get_clean();
-}
+        if (empty($details)) {
+            return '<span style="color: #999; font-style: italic;">No details available</span>';
+        }
 
+        // Decode JSON if it's a string
+        if (is_string($details)) {
+            $decoded = json_decode($details, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $details = $decoded;
+            }
+        }
+
+        if (!is_array($details) || empty($details)) {
+            return '<span style="color: #999; font-style: italic;">No details available</span>';
+        }
+        
+        $output = '';
+        $count = 0;
+        
+        // Remove unimportant keys
+        $skip_keys = ['edit_post', 'view_post', 'view_revisions', 'edit_acf_group', 'visit_user'];
+        
+        foreach ($details as $key => $value) {
+            if (in_array($key, $skip_keys)) {
+                continue;
+            }
+            
+            $clean_key = ucwords(str_replace('_', ' ', $key));
+            
+            $output .= '<div class="detail-line">';
+            $output .= '<span class="detail-label">' . esc_html($clean_key) . ':</span> ';
+            
+            if (is_array($value)) {
+                if (isset($value['old']) && isset($value['new'])) {
+                    // Show complete old and new values
+                    $output .= '<span class="old-value">' . esc_html($value['old']) . '</span>';
+                    $output .= '<span class="arrow"> → </span>';
+                    $output .= '<span class="new-value">' . esc_html($value['new']) . '</span>';
+                } elseif (isset($value['added']) && !empty($value['added'])) {
+                    $added = is_array($value['added']) ? implode(', ', $value['added']) : $value['added'];
+                    $output .= '<span style="color: #006600;">Added: ' . esc_html($added) . '</span>';
+                } elseif (isset($value['removed']) && !empty($value['removed'])) {
+                    $removed = is_array($value['removed']) ? implode(', ', $value['removed']) : $value['removed'];
+                    $output .= '<span style="color: #cc0000;">Removed: ' . esc_html($removed) . '</span>';
+                } elseif (isset($value['characters_changed'])) {
+                    // Content changes
+                    $ch = $value['characters_changed'];
+                    $is_plus = strpos($ch, '+') === 0;
+                    $num = abs((int) $ch);
+                    $output .= '<span style="color: ' . ($is_plus ? '#006600' : '#cc0000') . '; font-weight: bold;">';
+                    $output .= ($is_plus ? '+' : '-') . $num . ' characters';
+                    if (isset($value['old_length']) && isset($value['new_length'])) {
+                        $output .= ' (' . $value['old_length'] . ' → ' . $value['new_length'] . ')';
+                    }
+                    $output .= '</span>';
+                    
+                    // Show word changes if available
+                    if (isset($value['word_changes']['added_words']['count'])) {
+                        $aw = $value['word_changes']['added_words'];
+                        $output .= '<br><span style="color: #006600; font-size: 7px;">';
+                        $output .= 'New words: ' . $aw['count'];
+                        if (!empty($aw['sample'])) {
+                            $output .= ' (e.g., "' . esc_html(substr($aw['sample'], 0, 50)) . '")';
+                        }
+                        $output .= '</span>';
+                    }
+                } else {
+                    // Show array as JSON
+                    $output .= esc_html(json_encode($value, JSON_UNESCAPED_UNICODE));
+                }
+            } else {
+                // Show simple value (full text, not truncated)
+                $output .= esc_html($value);
+            }
+            
+            $output .= '</div>';
+            $count++;
+            
+            // Limit to 5 detail lines to avoid too much height
+            if ($count >= 5) {
+                if (count($details) > 5) {
+                    $output .= '<div style="color: #666; font-size: 7px;">... and ' . (count($details) - 5) . ' more changes</div>';
+                }
+                break;
+            }
+        }
+        
+        // Add IP address if available
+        if (!empty($log->user_ip)) {
+            $output .= '<div class="detail-line" style="margin-top: 3px; padding-top: 3px; border-top: 1px dashed #ddd;">';
+            $output .= '<span class="detail-label">IP Address:</span> ';
+            $output .= esc_html($log->user_ip);
+            $output .= '</div>';
+        }
+        
+        return $output;
+    }
     
-}
+} // End of class
