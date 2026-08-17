@@ -1,16 +1,23 @@
 <?php
-class Site_Logger {
-    
+
+// Prevent direct access
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+class Site_Logger
+{
+
     /**
      * Plugin instance
      */
     private static $instance = null;
-    
+
     /**
      * Database table name
      */
     const TABLE_NAME = 'site_logs';
-    
+
     /**
      * Severity levels
      */
@@ -24,7 +31,7 @@ class Site_Logger {
         'info',
         'debug'
     ];
-    
+
     /**
      * Options to skip logging (too noisy)
      */
@@ -39,81 +46,88 @@ class Site_Logger {
         'finished_splitting_shared_terms',
         'db_upgraded',
     ];
-    
+
     /**
      * Initialize plugin
      */
-    public static function init() {
+    public static function init()
+    {
         if (is_null(self::$instance)) {
             self::$instance = new self();
         }
         return self::$instance;
     }
-    
+
     /**
      * Constructor
      */
-    private function __construct() {
+    private function __construct()
+    {
         $this->setup_hooks();
     }
-    
+
     /**
      * Setup WordPress hooks
      */
-    private function setup_hooks() {
+    private function setup_hooks()
+    {
         // Initialize on WordPress init
         add_action('init', [$this, 'init_plugin']);
-        
+
         // Cleanup old logs daily
         add_action('site_logger_daily_cleanup', [$this, 'cleanup_old_logs']);
     }
-    
+
     /**
      * Initialize plugin components
      */
-    public function init_plugin() {
+    public function init_plugin()
+    {
         // Initialize hooks handler
         Site_Logger_Hooks::init();
 
         add_action('admin_init', [__CLASS__, 'handle_post_requests'], 1);
     }
-    
+
     /**
      * Plugin activation
      */
-    public static function activate() {
+    public static function activate()
+    {
         // Create database table
         self::create_table();
-        
+
         // Set default options
         update_option('site_logger_version', SITE_LOGGER_VERSION);
         update_option('site_logger_retention_days', 30);
         update_option('site_logger_severity_level', 'info');
         update_option('site_logger_skip_cron', 'yes');
-        
+
         // Schedule daily cleanup
         if (!wp_next_scheduled('site_logger_daily_cleanup')) {
             wp_schedule_event(time(), 'daily', 'site_logger_daily_cleanup');
         }
     }
-    
+
     /**
      * Plugin deactivation
      */
-    public static function deactivate() {
+    public static function deactivate()
+    {
         // Clear scheduled cleanup
         wp_clear_scheduled_hook('site_logger_daily_cleanup');
     }
-    
+
     /**
      * Create database table with optimized indexes
      */
-    private static function create_table() {
+    private static function create_table()
+    {
         global $wpdb;
-        
+
         $table_name = $wpdb->prefix . self::TABLE_NAME;
         $charset_collate = $wpdb->get_charset_collate();
-        
+
         $sql = "CREATE TABLE IF NOT EXISTS $table_name (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -136,35 +150,36 @@ class Site_Logger {
             INDEX idx_user_action (user_id, action),
             INDEX idx_object (object_type, object_id)
         ) $charset_collate;";
-        
+
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
         dbDelta($sql);
     }
-    
+
     /**
      * Log an activity with HTML support
      */
-    public static function log($action, $object_type = '', $object_id = 0, $object_name = '', $details = [], $severity = 'info') {
+    public static function log($action, $object_type = '', $object_id = 0, $object_name = '', $details = [], $severity = 'info')
+    {
         global $wpdb;
-        
+
         // Check if we should skip this log based on severity setting
         $min_severity = get_option('site_logger_severity_level', 'info');
         $levels = array_flip(self::SEVERITY_LEVELS);
-        
+
         if (!isset($levels[$severity]) || !isset($levels[$min_severity])) {
             return false;
         }
-        
+
         // Skip if severity is below minimum
         if ($levels[$severity] > $levels[$min_severity]) {
             return false;
         }
-        
+
         $table_name = $wpdb->prefix . self::TABLE_NAME;
-        
+
         // Format details for storage
         $formatted_details = is_array($details) ? $details : [];
-        
+
         // Process details to ensure HTML is properly stored
         foreach ($formatted_details as $key => $value) {
             // If value contains HTML, make sure it's properly formatted
@@ -176,7 +191,7 @@ class Site_Logger {
                 $formatted_details[$key] = $value;
             }
         }
-        
+
         $data = [
             'user_id' => get_current_user_id() ?: 0,
             'user_ip' => self::get_user_ip(),
@@ -188,65 +203,66 @@ class Site_Logger {
             'details' => wp_json_encode($formatted_details, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
             'timestamp' => current_time('mysql')
         ];
-        
+
         // Insert into database
         $result = $wpdb->insert($table_name, $data);
-        
+
         // Error logging for debugging
         if (false === $result) {
             error_log('Site Logger Error: Failed to insert log. Error: ' . $wpdb->last_error);
         }
-        
+
         return $result;
     }
-    
+
     /**
      * Get logs with pagination and HTML support
      */
-    public static function get_logs($page = 1, $per_page = 50, $filters = []) {
+    public static function get_logs($page = 1, $per_page = 50, $filters = [])
+    {
         global $wpdb;
-        
+
         $table_name = $wpdb->prefix . self::TABLE_NAME;
-        
+
         $where = ['1=1'];
         $params = [];
-        
+
         // Apply filters
         if (!empty($filters['severity'])) {
             $where[] = 'severity = %s';
             $params[] = $filters['severity'];
         }
-        
+
         if (!empty($filters['user_id'])) {
             $where[] = 'user_id = %d';
             $params[] = $filters['user_id'];
         }
-        
+
         if (!empty($filters['action'])) {
             $where[] = 'action = %s';
             $params[] = $filters['action'];
         }
-        
+
         if (!empty($filters['object_type'])) {
             $where[] = 'object_type = %s';
             $params[] = $filters['object_type'];
         }
-        
+
         if (!empty($filters['object_id'])) {
             $where[] = 'object_id = %d';
             $params[] = $filters['object_id'];
         }
-        
+
         if (!empty($filters['date_from'])) {
             $where[] = 'timestamp >= %s';
             $params[] = $filters['date_from'];
         }
-        
+
         if (!empty($filters['date_to'])) {
             $where[] = 'timestamp <= %s';
             $params[] = $filters['date_to'];
         }
-        
+
         if (!empty($filters['search'])) {
             $where[] = '(object_name LIKE %s OR details LIKE %s OR action LIKE %s)';
             $search_term = '%' . $wpdb->esc_like($filters['search']) . '%';
@@ -254,34 +270,34 @@ class Site_Logger {
             $params[] = $search_term;
             $params[] = $search_term;
         }
-        
+
         $where_sql = implode(' AND ', $where);
-        
+
         // Calculate offset for pagination
         $offset = max(0, ($page - 1) * $per_page);
-        
+
         // Optimized query with EXPLAIN hints
         $query = "SELECT SQL_CALC_FOUND_ROWS * FROM $table_name WHERE $where_sql ORDER BY timestamp DESC";
         $query .= " LIMIT %d OFFSET %d";
-        
+
         $params[] = absint($per_page);
         $params[] = absint($offset);
-        
+
         if (!empty($params)) {
             $query = $wpdb->prepare($query, $params);
         }
-        
+
         $results = $wpdb->get_results($query);
-        
+
         // Handle database errors
         if ($wpdb->last_error) {
             error_log('Site Logger Database Error: ' . $wpdb->last_error);
             return [];
         }
-        
+
         // Get total count using FOUND_ROWS() for better performance
         $total_logs = $wpdb->get_var('SELECT FOUND_ROWS()');
-        
+
         // Decode details with HTML preservation
         foreach ($results as $log) {
             if (!empty($log->details)) {
@@ -291,75 +307,77 @@ class Site_Logger {
                 } else {
                     $unserialized = maybe_unserialize($log->details);
                     if (is_array($unserialized) || is_object($unserialized)) {
-                        $log->details = (array)$unserialized;
+                        $log->details = (array) $unserialized;
                     }
                 }
             }
         }
-        
+
         return [
             'logs' => $results,
             'total' => $total_logs
         ];
     }
-    
+
     /**
      * Get logs count with filters
      */
-    public static function get_logs_count($filters = []) {
+    public static function get_logs_count($filters = [])
+    {
         global $wpdb;
-        
+
         $table_name = $wpdb->prefix . self::TABLE_NAME;
-        
+
         $where = ['1=1'];
         $params = [];
-        
+
         // Apply filters
         if (!empty($filters['severity'])) {
             $where[] = 'severity = %s';
             $params[] = $filters['severity'];
         }
-        
+
         if (!empty($filters['user_id'])) {
             $where[] = 'user_id = %d';
             $params[] = $filters['user_id'];
         }
-        
+
         if (!empty($filters['action'])) {
             $where[] = 'action = %s';
             $params[] = $filters['action'];
         }
-        
+
         if (!empty($filters['date_from'])) {
             $where[] = 'timestamp >= %s';
             $params[] = $filters['date_from'];
         }
-        
+
         if (!empty($filters['date_to'])) {
             $where[] = 'timestamp <= %s';
             $params[] = $filters['date_to'];
         }
-        
+
         $where_sql = implode(' AND ', $where);
-        
+
         $query = "SELECT COUNT(*) FROM $table_name WHERE $where_sql";
-        
+
         if (!empty($params)) {
             $query = $wpdb->prepare($query, $params);
         }
-        
+
         return $wpdb->get_var($query);
     }
-    
+
     /**
      * Get logs grouped by action
      */
-    public static function get_logs_by_action($page = 1, $per_page = 10) {
+    public static function get_logs_by_action($page = 1, $per_page = 10)
+    {
         global $wpdb;
-        
+
         $table_name = $wpdb->prefix . self::TABLE_NAME;
         $offset = ($page - 1) * $per_page;
-        
+
         $query = $wpdb->prepare(
             "SELECT action, COUNT(*) as count 
              FROM $table_name 
@@ -369,19 +387,20 @@ class Site_Logger {
             $per_page,
             $offset
         );
-        
+
         return $wpdb->get_results($query);
     }
-    
+
     /**
      * Get logs grouped by user
      */
-    public static function get_logs_by_user($page = 1, $per_page = 10) {
+    public static function get_logs_by_user($page = 1, $per_page = 10)
+    {
         global $wpdb;
-        
+
         $table_name = $wpdb->prefix . self::TABLE_NAME;
         $offset = ($page - 1) * $per_page;
-        
+
         $query = $wpdb->prepare(
             "SELECT user_id, COUNT(*) as count 
              FROM $table_name 
@@ -392,38 +411,40 @@ class Site_Logger {
             $per_page,
             $offset
         );
-        
+
         return $wpdb->get_results($query);
     }
-    
+
     /**
      * Cleanup old logs
      */
-    public static function cleanup_old_logs() {
+    public static function cleanup_old_logs()
+    {
         global $wpdb;
-        
+
         $table_name = $wpdb->prefix . self::TABLE_NAME;
         $retention_days = get_option('site_logger_retention_days', 30);
-        
+
         $date = date('Y-m-d H:i:s', strtotime("-$retention_days days"));
-        
+
         $wpdb->query(
             $wpdb->prepare(
                 "DELETE FROM $table_name WHERE timestamp < %s",
                 $date
             )
         );
-        
+
         // Optimize table after deletion
         $wpdb->query("OPTIMIZE TABLE $table_name");
     }
-    
+
     /**
      * Get user IP address
      */
-    private static function get_user_ip() {
+    private static function get_user_ip()
+    {
         $ip = '';
-        
+
         if (!empty($_SERVER['HTTP_CLIENT_IP'])) {
             $ip = $_SERVER['HTTP_CLIENT_IP'];
         } elseif (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
@@ -432,18 +453,19 @@ class Site_Logger {
         } elseif (!empty($_SERVER['REMOTE_ADDR'])) {
             $ip = $_SERVER['REMOTE_ADDR'];
         }
-        
+
         return filter_var($ip, FILTER_VALIDATE_IP) ? $ip : '';
     }
-    
+
     /**
      * Get activity summary
      */
-    public static function get_summary() {
+    public static function get_summary()
+    {
         global $wpdb;
-        
+
         $table_name = $wpdb->prefix . self::TABLE_NAME;
-        
+
         return [
             'total' => $wpdb->get_var("SELECT COUNT(*) FROM $table_name"),
             'today' => $wpdb->get_var(
@@ -466,40 +488,42 @@ class Site_Logger {
             'debug' => $wpdb->get_var("SELECT COUNT(*) FROM $table_name WHERE severity = 'debug'")
         ];
     }
-    
+
     /**
      * Should skip option logging?
      */
-    public static function should_skip_option($option_name) {
+    public static function should_skip_option($option_name)
+    {
         // Skip cron logs if setting enabled
         if ($option_name === 'cron' && get_option('site_logger_skip_cron', 'yes') === 'yes') {
             return true;
         }
-        
+
         // Skip other noisy options
         foreach (self::SKIP_OPTIONS as $skip) {
             if (strpos($option_name, $skip) !== false) {
                 return true;
             }
         }
-        
+
         return false;
     }
-    
+
     /**
      * Add admin menu
      */
-    public static function add_admin_menu() {
+    public static function add_admin_menu()
+    {
         add_menu_page(
             __('Site Logs', 'site-logger'),
-            __('Site Logs', 'site-logger'),
+            __('TE Site Logs', 'site-logger'),
             'manage_options',
             'site-logs',
             [__CLASS__, 'render_admin_page'],
             'dashicons-list-view',
             30
         );
-        
+
         // Add settings submenu
         add_submenu_page(
             'site-logs',
@@ -510,31 +534,32 @@ class Site_Logger {
             [__CLASS__, 'render_settings_page']
         );
     }
-    
+
     /**
      * Render admin page
      */
-    public static function render_admin_page() {
+    public static function render_admin_page()
+    {
         // Initialize filters array
         $filters = [];
-        
+
         // Handle reset parameter FIRST
         if (isset($_GET['reset']) && $_GET['reset'] == '1') {
             // Clear all stored filters
             delete_transient('site_logger_current_filters_' . get_current_user_id());
             delete_transient('site_logger_current_per_page_' . get_current_user_id());
-            
+
             // Remove reset parameter from URL
             wp_safe_redirect(admin_url('admin.php?page=site-logs'));
             exit;
         }
-        
+
         // Check if we're viewing filtered results (only if NOT reset)
         if (isset($_GET['filtered']) && $_GET['filtered'] == '1') {
             // Retrieve stored filters
             $filters = get_transient('site_logger_current_filters_' . get_current_user_id());
             $per_page = get_transient('site_logger_current_per_page_' . get_current_user_id());
-            
+
             // If no stored filters, use defaults
             if ($filters === false) {
                 $filters = [];
@@ -545,7 +570,7 @@ class Site_Logger {
         } else {
             // For direct GET requests (not from POST redirect), use URL parameters
             $per_page = get_option('posts_per_page', 10);
-            
+
             if (!empty($_GET['severity'])) {
                 $filters['severity'] = sanitize_text_field($_GET['severity']);
             }
@@ -571,7 +596,7 @@ class Site_Logger {
                 $per_page = intval($_GET['per_page']);
             }
         }
-        
+
         // Get current page
         $current_page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
 
@@ -580,62 +605,70 @@ class Site_Logger {
             $per_page_options[] = $per_page;
             sort($per_page_options);
         }
-        
+
         // Get logs with pagination
         $logs_data = self::get_logs($current_page, $per_page, $filters);
         $logs = $logs_data['logs'];
         $total_logs = $logs_data['total'];
         $total_pages = ceil($total_logs / $per_page);
-        
+
         $summary = self::get_summary();
-        
+
         // Get unique actions for filter
         global $wpdb;
         $table_name = $wpdb->prefix . self::TABLE_NAME;
         $actions = $wpdb->get_col("SELECT DISTINCT action FROM $table_name ORDER BY action");
-        
+
         // Get unique object types for filter
         $object_types = $wpdb->get_col("SELECT DISTINCT object_type FROM $table_name WHERE object_type != '' ORDER BY object_type");
 
         ?>
         <div class="wrap">
             <h1><?php _e('Site Activity Logs', 'site-logger'); ?></h1>
-            
+
             <!-- Summary -->
-            <div class="site-logs-summary" style="background: #fff; padding: 20px; margin: 20px 0; border: 1px solid #ccd0d4; border-radius: 4px;">
+            <div class="site-logs-summary"
+                style="background: #fff; padding: 20px; margin: 20px 0; border: 1px solid #ccd0d4; border-radius: 4px;">
                 <h2 style="margin-top: 0;"><?php _e('Overview', 'site-logger'); ?></h2>
                 <div style="display: flex; gap: 30px; flex-wrap: wrap;">
                     <div>
-                        <h3 style="margin: 0 0 5px 0; color: #2271b1;"><?php echo esc_html(number_format($summary['total'])); ?></h3>
+                        <h3 style="margin: 0 0 5px 0; color: #2271b1;"><?php echo esc_html(number_format($summary['total'])); ?>
+                        </h3>
                         <p style="margin: 0; color: #646970;"><?php _e('Total Logs', 'site-logger'); ?></p>
                     </div>
                     <div>
-                        <h3 style="margin: 0 0 5px 0; color: #00a32a;"><?php echo esc_html(number_format($summary['today'])); ?></h3>
+                        <h3 style="margin: 0 0 5px 0; color: #00a32a;"><?php echo esc_html(number_format($summary['today'])); ?>
+                        </h3>
                         <p style="margin: 0; color: #646970;"><?php _e('Today', 'site-logger'); ?></p>
                     </div>
                     <div>
-                        <h3 style="margin: 0 0 5px 0; color: #d63638;"><?php echo esc_html(number_format($summary['errors'])); ?></h3>
+                        <h3 style="margin: 0 0 5px 0; color: #d63638;">
+                            <?php echo esc_html(number_format($summary['errors'])); ?></h3>
                         <p style="margin: 0; color: #646970;"><?php _e('Errors', 'site-logger'); ?></p>
                     </div>
                     <div>
-                        <h3 style="margin: 0 0 5px 0; color: #ffb900;"><?php echo esc_html(number_format($summary['warnings'])); ?></h3>
+                        <h3 style="margin: 0 0 5px 0; color: #ffb900;">
+                            <?php echo esc_html(number_format($summary['warnings'])); ?></h3>
                         <p style="margin: 0; color: #646970;"><?php _e('Warnings', 'site-logger'); ?></p>
                     </div>
                     <div>
-                        <h3 style="margin: 0 0 5px 0; color: #f0c33c;"><?php echo esc_html(number_format($summary['users'])); ?></h3>
+                        <h3 style="margin: 0 0 5px 0; color: #f0c33c;"><?php echo esc_html(number_format($summary['users'])); ?>
+                        </h3>
                         <p style="margin: 0; color: #646970;"><?php _e('Active Users', 'site-logger'); ?></p>
                     </div>
                 </div>
             </div>
-            
+
             <!-- Filters -->
-            <div class="site-logs-filters" style="background: #fff; padding: 20px; margin: 20px 0; border: 1px solid #ccd0d4; border-radius: 4px;">
+            <div class="site-logs-filters"
+                style="background: #fff; padding: 20px; margin: 20px 0; border: 1px solid #ccd0d4; border-radius: 4px;">
                 <h3 style="margin-top: 0;"><?php _e('Filter Logs', 'site-logger'); ?></h3>
                 <form method="post" action="<?php echo admin_url('admin.php?page=site-logs'); ?>">
                     <?php wp_nonce_field('site_logger_filter', 'site_logger_filter_nonce'); ?>
                     <input type="hidden" name="site_logger_filter" value="1">
-                    
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 15px;">
+
+                    <div
+                        style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 15px;">
                         <div>
                             <label for="severity" style="display: block; margin-bottom: 5px; font-weight: 600;">
                                 <?php _e('Severity:', 'site-logger'); ?>
@@ -649,7 +682,7 @@ class Site_Logger {
                                 <?php endforeach; ?>
                             </select>
                         </div>
-                        
+
                         <div>
                             <label for="user_id" style="display: block; margin-bottom: 5px; font-weight: 600;">
                                 <?php _e('User:', 'site-logger'); ?>
@@ -664,7 +697,7 @@ class Site_Logger {
                             ]);
                             ?>
                         </div>
-                        
+
                         <div>
                             <label for="action" style="display: block; margin-bottom: 5px; font-weight: 600;">
                                 <?php _e('Action:', 'site-logger'); ?>
@@ -678,7 +711,7 @@ class Site_Logger {
                                 <?php endforeach; ?>
                             </select>
                         </div>
-                        
+
                         <div>
                             <label for="object_type" style="display: block; margin-bottom: 5px; font-weight: 600;">
                                 <?php _e('Object Type:', 'site-logger'); ?>
@@ -690,39 +723,38 @@ class Site_Logger {
                                         <?php echo esc_html(ucfirst($type)); ?>
                                     </option>
                                 <?php endforeach; ?>
-                                </select>
+                            </select>
                         </div>
-                        
+
                         <div>
                             <label for="date_from" style="display: block; margin-bottom: 5px; font-weight: 600;">
                                 <?php _e('Date From:', 'site-logger'); ?>
                             </label>
-                            <input type="date" name="date_from" id="date_from" 
-                                   value="<?php echo !empty($filters['date_from']) ? esc_attr($filters['date_from']) : ''; ?>" 
-                                   style="width: 100%;">
+                            <input type="date" name="date_from" id="date_from"
+                                value="<?php echo !empty($filters['date_from']) ? esc_attr($filters['date_from']) : ''; ?>"
+                                style="width: 100%;">
                         </div>
-                        
+
                         <div>
                             <label for="date_to" style="display: block; margin-bottom: 5px; font-weight: 600;">
                                 <?php _e('Date To:', 'site-logger'); ?>
                             </label>
-                            <input type="date" name="date_to" id="date_to" 
-                                   value="<?php echo !empty($filters['date_to']) ? esc_attr($filters['date_to']) : ''; ?>" 
-                                   style="width: 100%;">
+                            <input type="date" name="date_to" id="date_to"
+                                value="<?php echo !empty($filters['date_to']) ? esc_attr($filters['date_to']) : ''; ?>"
+                                style="width: 100%;">
                         </div>
                     </div>
-                    
+
                     <div style="display: flex; gap: 20px; align-items: flex-end;">
                         <div style="flex: 1;">
                             <label for="search" style="display: block; margin-bottom: 5px; font-weight: 600;">
                                 <?php _e('Search:', 'site-logger'); ?>
                             </label>
-                            <input type="text" name="search" id="search" 
-                                   value="<?php echo !empty($filters['search']) ? esc_attr($filters['search']) : ''; ?>" 
-                                   placeholder="<?php esc_attr_e('Search logs...', 'site-logger'); ?>" 
-                                   style="width: 100%;">
+                            <input type="text" name="search" id="search"
+                                value="<?php echo !empty($filters['search']) ? esc_attr($filters['search']) : ''; ?>"
+                                placeholder="<?php esc_attr_e('Search logs...', 'site-logger'); ?>" style="width: 100%;">
                         </div>
-                        
+
                         <div>
                             <label for="per_page" style="display: block; margin-bottom: 5px; font-weight: 600;">
                                 <?php _e('Logs per page:', 'site-logger'); ?>
@@ -735,9 +767,10 @@ class Site_Logger {
                                 <?php endforeach; ?>
                             </select>
                         </div>
-                        
+
                         <div>
-                            <button type="submit" name="apply_filters" class="button button-primary" style="margin-bottom: 5px;">
+                            <button type="submit" name="apply_filters" class="button button-primary"
+                                style="margin-bottom: 5px;">
                                 <?php _e('Apply Filters', 'site-logger'); ?>
                             </button>
                             <button type="submit" name="reset_filters" class="button" onclick="resetForm(event)">
@@ -751,46 +784,48 @@ class Site_Logger {
                             </span>
                             <div style="display: flex; gap: 10px;">
                                 <!-- Export buttons (still use GET with current filters) -->
-                                <a href="<?php 
-                                    echo wp_nonce_url(
-                                        add_query_arg(
-                                            array_merge(
-                                                ['export_type' => 'csv', 'page' => 'site-logs'],
-                                                $filters
-                                            ),
-                                            admin_url('admin.php')
+                                <a href="<?php
+                                echo wp_nonce_url(
+                                    add_query_arg(
+                                        array_merge(
+                                            ['export_type' => 'csv', 'page' => 'site-logs'],
+                                            $filters
                                         ),
-                                        'site_logger_export'
-                                    );
+                                        admin_url('admin.php')
+                                    ),
+                                    'site_logger_export'
+                                );
                                 ?>" class="button" style="background: #00a32a; border-color: #00a32a; color: white;">
-                                    <span class="dashicons dashicons-media-spreadsheet" style="vertical-align: middle; margin-right: 5px;"></span>
+                                    <span class="dashicons dashicons-media-spreadsheet"
+                                        style="vertical-align: middle; margin-right: 5px;"></span>
                                     <?php _e('Export CSV', 'site-logger'); ?>
                                 </a>
-                                
-                                <a href="<?php 
-                                    echo wp_nonce_url(
-                                        add_query_arg(
-                                            array_merge(
-                                                ['export_type' => 'pdf', 'page' => 'site-logs'],
-                                                $filters
-                                            ),
-                                            admin_url('admin.php')
+
+                                <a href="<?php
+                                echo wp_nonce_url(
+                                    add_query_arg(
+                                        array_merge(
+                                            ['export_type' => 'pdf', 'page' => 'site-logs'],
+                                            $filters
                                         ),
-                                        'site_logger_export'
-                                    );
+                                        admin_url('admin.php')
+                                    ),
+                                    'site_logger_export'
+                                );
                                 ?>" class="button" style="background: #d63638; border-color: #d63638; color: white;">
-                                    <span class="dashicons dashicons-media-document" style="vertical-align: middle; margin-right: 5px;"></span>
+                                    <span class="dashicons dashicons-media-document"
+                                        style="vertical-align: middle; margin-right: 5px;"></span>
                                     <?php _e('Export PDF', 'site-logger'); ?>
                                 </a>
                             </div>
                         </div>
                     </div>
-                    
+
                     <!-- Hidden current page field -->
                     <input type="hidden" name="paged" value="<?php echo esc_attr($current_page); ?>">
                 </form>
             </div>
-            
+
             <!-- Logs Table with bottom-left pagination -->
             <div style="position: relative;">
                 <div style="background: #fff; border: 1px solid #ccd0d4; border-radius: 4px; overflow: hidden;">
@@ -798,6 +833,7 @@ class Site_Logger {
                         <thead>
                             <tr>
                                 <th width="150"><?php _e('Time', 'site-logger'); ?></th>
+                                <th width="150"><?php _e('IP', 'site-logger'); ?></th>
                                 <th width="100"><?php _e('Severity', 'site-logger'); ?></th>
                                 <th width="120"><?php _e('User', 'site-logger'); ?></th>
                                 <th width="150"><?php _e('Action', 'site-logger'); ?></th>
@@ -817,6 +853,7 @@ class Site_Logger {
                                     <?php
                                     $user = $log->user_id ? get_user_by('id', $log->user_id) : null;
                                     $username = $user ? $user->display_name : __('System', 'site-logger');
+                                    $ip = $log->user_ip;
                                     $time = date_i18n('M j, H:i:s', strtotime($log->timestamp));
                                     $time_full = date_i18n('Y-m-d H:i:s', strtotime($log->timestamp));
                                     $details = $log->details;
@@ -828,14 +865,20 @@ class Site_Logger {
                                             </span>
                                         </td>
                                         <td>
-                                            <span class="severity-badge severity-<?php echo esc_attr($log->severity); ?>" 
-                                                  style="display: inline-block; padding: 3px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; text-transform: uppercase; background: #f0f0f1; color: #50575e;">
+                                            <span title="<?php echo esc_attr($time_full); ?>">
+                                                <?php echo $ip; ?>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span class="severity-badge severity-<?php echo esc_attr($log->severity); ?>"
+                                                style="display: inline-block; padding: 3px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; text-transform: uppercase; background: #f0f0f1; color: #50575e;">
                                                 <?php echo esc_html(ucfirst($log->severity)); ?>
                                             </span>
                                         </td>
                                         <td>
                                             <?php if ($user): ?>
-                                                <a href="<?php echo get_edit_user_link($log->user_id); ?>" title="<?php echo esc_attr($user->user_email); ?>">
+                                                <a href="<?php echo get_edit_user_link($log->user_id); ?>"
+                                                    title="<?php echo esc_attr($user->user_email); ?>">
                                                     <?php echo esc_html($username); ?>
                                                 </a>
                                             <?php else: ?>
@@ -846,7 +889,7 @@ class Site_Logger {
                                             <code><?php echo esc_html(self::format_action($log->action)); ?></code>
                                         </td>
                                         <td>
-                                            <?php 
+                                            <?php
                                             $object_text = '';
                                             if ($log->object_id > 0) {
                                                 if ($log->object_type === 'post') {
@@ -903,95 +946,99 @@ class Site_Logger {
                         </tbody>
                     </table>
                 </div>
-                
+
                 <!-- Bottom Left Pagination -->
                 <?php if ($total_pages > 1): ?>
-                <div class="tablenav bottom" style="margin: 20px 0; display: flex; justify-content: space-between; align-items: center;">
-                    <div class="tablenav-pages" style="float: none;">
-                        <span class="displaying-num"><?php 
+                    <div class="tablenav bottom"
+                        style="margin: 20px 0; display: flex; justify-content: space-between; align-items: center;">
+                        <div class="tablenav-pages" style="float: none;">
+                            <span class="displaying-num"><?php
                             printf(
                                 __('Displaying %1$s–%2$s of %3$s', 'site-logger'),
                                 number_format(($current_page - 1) * $per_page + 1),
                                 number_format(min($current_page * $per_page, $total_logs)),
                                 number_format($total_logs)
                             );
-                        ?></span>
-                        <span class="pagination-links">
-                            <?php
-                            // Create pagination links with filters
-                            $pagination_args = array_merge(['page' => 'site-logs'], $filters);
-                            
-                            // First page link
-                            if ($current_page > 1) {
-                                $first_args = array_merge($pagination_args, ['paged' => 1]);
-                                $first_url = add_query_arg($first_args, admin_url('admin.php'));
-                                echo '<a class="first-page button" href="' . esc_url($first_url) . '"><span class="screen-reader-text">' . __('First page', 'site-logger') . '</span><span aria-hidden="true">«</span></a>';
-                            } else {
-                                echo '<span class="tablenav-pages-navspan button disabled" aria-hidden="true">«</span>';
-                            }
-                            
-                            // Previous page link
-                            if ($current_page > 1) {
-                                $prev_args = array_merge($pagination_args, ['paged' => $current_page - 1]);
-                                $prev_url = add_query_arg($prev_args, admin_url('admin.php'));
-                                echo '<a class="prev-page button" href="' . esc_url($prev_url) . '"><span class="screen-reader-text">' . __('Previous page', 'site-logger') . '</span><span aria-hidden="true">‹</span></a>';
-                            } else {
-                                echo '<span class="tablenav-pages-navspan button disabled" aria-hidden="true">‹</span>';
-                            }
-                            ?>
-                            
-                            <span class="paging-input" style="margin: 0 10px;">
-                                <label for="current-page-selector" class="screen-reader-text"><?php _e('Current Page', 'site-logger'); ?></label>
-                                <?php _e('Page', 'site-logger'); ?>
-                                <span class="current-page"><?php echo esc_html($current_page); ?></span>
-                                <?php _e('of', 'site-logger'); ?> <span class="total-pages"><?php echo esc_html($total_pages); ?></span>
+                            ?></span>
+                            <span class="pagination-links">
+                                <?php
+                                // Create pagination links with filters
+                                $pagination_args = array_merge(['page' => 'site-logs'], $filters);
+
+                                // First page link
+                                if ($current_page > 1) {
+                                    $first_args = array_merge($pagination_args, ['paged' => 1]);
+                                    $first_url = add_query_arg($first_args, admin_url('admin.php'));
+                                    echo '<a class="first-page button" href="' . esc_url($first_url) . '"><span class="screen-reader-text">' . __('First page', 'site-logger') . '</span><span aria-hidden="true">«</span></a>';
+                                } else {
+                                    echo '<span class="tablenav-pages-navspan button disabled" aria-hidden="true">«</span>';
+                                }
+
+                                // Previous page link
+                                if ($current_page > 1) {
+                                    $prev_args = array_merge($pagination_args, ['paged' => $current_page - 1]);
+                                    $prev_url = add_query_arg($prev_args, admin_url('admin.php'));
+                                    echo '<a class="prev-page button" href="' . esc_url($prev_url) . '"><span class="screen-reader-text">' . __('Previous page', 'site-logger') . '</span><span aria-hidden="true">‹</span></a>';
+                                } else {
+                                    echo '<span class="tablenav-pages-navspan button disabled" aria-hidden="true">‹</span>';
+                                }
+                                ?>
+
+                                <span class="paging-input" style="margin: 0 10px;">
+                                    <label for="current-page-selector"
+                                        class="screen-reader-text"><?php _e('Current Page', 'site-logger'); ?></label>
+                                    <?php _e('Page', 'site-logger'); ?>
+                                    <span class="current-page22"><?php echo esc_html($current_page); ?></span>
+                                    <?php _e('of', 'site-logger'); ?> <span
+                                        class="total-pages"><?php echo esc_html($total_pages); ?></span>
+                                </span>
+
+                                <?php
+                                // Next page link
+                                if ($current_page < $total_pages) {
+                                    $next_args = array_merge($pagination_args, ['paged' => $current_page + 1]);
+                                    $next_url = add_query_arg($next_args, admin_url('admin.php'));
+                                    echo '<a class="next-page button" href="' . esc_url($next_url) . '"><span class="screen-reader-text">' . __('Next page', 'site-logger') . '</span><span aria-hidden="true">›</span></a>';
+                                } else {
+                                    echo '<span class="tablenav-pages-navspan button disabled" aria-hidden="true">›</span>';
+                                }
+
+                                // Last page link
+                                if ($current_page < $total_pages) {
+                                    $last_args = array_merge($pagination_args, ['paged' => $total_pages]);
+                                    $last_url = add_query_arg($last_args, admin_url('admin.php'));
+                                    echo '<a class="last-page button" href="' . esc_url($last_url) . '"><span class="screen-reader-text">' . __('Last page', 'site-logger') . '</span><span aria-hidden="true">»</span></a>';
+                                } else {
+                                    echo '<span class="tablenav-pages-navspan button disabled" aria-hidden="true">»</span>';
+                                }
+                                ?>
                             </span>
-                            
-                            <?php
-                            // Next page link
-                            if ($current_page < $total_pages) {
-                                $next_args = array_merge($pagination_args, ['paged' => $current_page + 1]);
-                                $next_url = add_query_arg($next_args, admin_url('admin.php'));
-                                echo '<a class="next-page button" href="' . esc_url($next_url) . '"><span class="screen-reader-text">' . __('Next page', 'site-logger') . '</span><span aria-hidden="true">›</span></a>';
-                            } else {
-                                echo '<span class="tablenav-pages-navspan button disabled" aria-hidden="true">›</span>';
-                            }
-                            
-                            // Last page link
-                            if ($current_page < $total_pages) {
-                                $last_args = array_merge($pagination_args, ['paged' => $total_pages]);
-                                $last_url = add_query_arg($last_args, admin_url('admin.php'));
-                                echo '<a class="last-page button" href="' . esc_url($last_url) . '"><span class="screen-reader-text">' . __('Last page', 'site-logger') . '</span><span aria-hidden="true">»</span></a>';
-                            } else {
-                                echo '<span class="tablenav-pages-navspan button disabled" aria-hidden="true">»</span>';
-                            }
-                            ?>
-                        </span>
+                        </div>
+
+                        <!-- Quick page jump form (POST method) -->
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <form method="post" action="<?php echo admin_url('admin.php?page=site-logs'); ?>"
+                                style="display: flex; align-items: center; gap: 5px;">
+                                <?php wp_nonce_field('site_logger_filter', 'site_logger_filter_nonce'); ?>
+                                <input type="hidden" name="site_logger_filter" value="1">
+                                <?php foreach ($filters as $key => $value): ?>
+                                    <?php if (!empty($value)): ?>
+                                        <input type="hidden" name="<?php echo esc_attr($key); ?>" value="<?php echo esc_attr($value); ?>">
+                                    <?php endif; ?>
+                                <?php endforeach; ?>
+                                <input type="hidden" name="per_page" value="<?php echo esc_attr($per_page); ?>">
+                                <label for="jump-page" style="font-size: 13px;"><?php _e('Jump to:', 'site-logger'); ?></label>
+                                <input type="number" id="jump-page" name="paged" min="1" max="<?php echo esc_attr($total_pages); ?>"
+                                    value="<?php echo esc_attr($current_page); ?>" style="width: 60px;">
+                                <button type="submit" class="button button-small"><?php _e('Go', 'site-logger'); ?></button>
+                            </form>
+                        </div>
                     </div>
-                    
-                    <!-- Quick page jump form (POST method) -->
-                    <div style="display: flex; align-items: center; gap: 10px;">
-                        <form method="post" action="<?php echo admin_url('admin.php?page=site-logs'); ?>" style="display: flex; align-items: center; gap: 5px;">
-                            <?php wp_nonce_field('site_logger_filter', 'site_logger_filter_nonce'); ?>
-                            <input type="hidden" name="site_logger_filter" value="1">
-                            <?php foreach ($filters as $key => $value): ?>
-                                <?php if (!empty($value)): ?>
-                                    <input type="hidden" name="<?php echo esc_attr($key); ?>" value="<?php echo esc_attr($value); ?>">
-                                <?php endif; ?>
-                            <?php endforeach; ?>
-                            <input type="hidden" name="per_page" value="<?php echo esc_attr($per_page); ?>">
-                            <label for="jump-page" style="font-size: 13px;"><?php _e('Jump to:', 'site-logger'); ?></label>
-                            <input type="number" id="jump-page" name="paged" min="1" max="<?php echo esc_attr($total_pages); ?>" 
-                                   value="<?php echo esc_attr($current_page); ?>" style="width: 60px;">
-                            <button type="submit" class="button button-small"><?php _e('Go', 'site-logger'); ?></button>
-                        </form>
-                    </div>
-                </div>
                 <?php else: ?>
                     <!-- Show total count when no pagination needed -->
                     <div class="tablenav bottom" style="margin: 20px 0;">
                         <div class="displaying-num">
-                            <?php 
+                            <?php
                             printf(
                                 _n('%s item', '%s items', $total_logs, 'site-logger'),
                                 number_format($total_logs)
@@ -1002,377 +1049,813 @@ class Site_Logger {
                 <?php endif; ?>
             </div>
         </div>
-        
+
         <style>
-        .severity-emergency { background: #dc3232 !important; color: white !important; }
-        .severity-alert { background: #f56e28 !important; color: white !important; }
-        .severity-critical { background: #d63638 !important; color: white !important; }
-        .severity-error { background: #ff0000 !important; color: white !important; }
-        .severity-warning { background: #ffb900 !important; color: #000 !important; }
-        .severity-notice { background: #00a0d2 !important; color: white !important; }
-        .severity-info { background: #2271b1 !important; color: white !important; }
-        .severity-debug { background: #a7aaad !important; color: #000 !important; }
+    /* Modern Admin UI */
+    .wrap {
+        max-width: 100%;
+    }
+    
+    .site-logs-summary {
+        background: #fff !important;
+        padding: 25px 30px !important;
+        margin: 20px 0 !important;
+        border: none !important;
+        border-radius: 12px !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06) !important;
+        transition: all 0.2s ease !important;
+    }
+    
+    .site-logs-summary:hover {
+        box-shadow: 0 4px 16px rgba(0,0,0,0.10) !important;
+    }
+    
+    .site-logs-summary h2 {
+        margin-top: 0 !important;
+        color: #1d2327 !important;
+        font-weight: 600 !important;
+        font-size: 18px !important;
+        letter-spacing: -0.3px !important;
+    }
+    
+    .summary-grid {
+        display: grid !important;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)) !important;
+        gap: 20px !important;
+        margin-top: 15px !important;
+    }
+    
+    .summary-item {
+        background: #f8f9fa !important;
+        border-radius: 10px !important;
+        padding: 15px 20px !important;
+        text-align: center !important;
+        transition: all 0.2s ease !important;
+        border: 1px solid #f0f0f1 !important;
+    }
+    
+    .summary-item:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important;
+    }
+    
+    .summary-number {
+        font-size: 26px !important;
+        font-weight: 700 !important;
+        margin: 0 !important;
+        line-height: 1.2 !important;
+    }
+    
+    .summary-label {
+        margin: 5px 0 0 0 !important;
+        color: #646970 !important;
+        font-size: 13px !important;
+    }
+    
+    .summary-total { color: #2271b1 !important; }
+    .summary-today { color: #00a32a !important; }
+    .summary-errors { color: #d63638 !important; }
+    .summary-warnings { color: #dba617 !important; }
+    .summary-users { color: #7b4b8f !important; }
+    
+    /* Filters Card */
+    .site-logs-filters {
+        background: #fff !important;
+        padding: 25px 30px !important;
+        margin: 20px 0 !important;
+        border: none !important;
+        border-radius: 12px !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06) !important;
+    }
+    
+    .site-logs-filters h3 {
+        margin-top: 0 !important;
+        margin-bottom: 20px !important;
+        color: #1d2327 !important;
+        font-weight: 600 !important;
+        font-size: 16px !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+    }
+    
+    .filter-grid {
+        display: grid !important;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)) !important;
+        gap: 15px !important;
+        margin-bottom: 20px !important;
+    }
+    
+    .filter-group label {
+        display: block !important;
+        margin-bottom: 5px !important;
+        font-weight: 600 !important;
+        font-size: 13px !important;
+        color: #1d2327 !important;
+    }
+    
+    .filter-group select,
+    .filter-group input {
+        width: 100% !important;
+        padding: 8px 12px !important;
+        border: 1.5px solid #dcdcde !important;
+        border-radius: 8px !important;
+        background: #fff !important;
+        font-size: 13px !important;
+        transition: all 0.2s ease !important;
+        min-height: 38px !important;
+    }
+    
+    .filter-group select:focus,
+    .filter-group input:focus {
+        border-color: #2271b1 !important;
+        box-shadow: 0 0 0 2px rgba(34,113,177,0.15) !important;
+        outline: none !important;
+    }
+    
+    .filter-actions {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 12px !important;
+        align-items: flex-end !important;
+        padding-top: 10px !important;
+        border-top: 1px solid #f0f0f1 !important;
+    }
+    
+    .filter-actions .button {
+        border-radius: 8px !important;
+        padding: 8px 20px !important;
+        font-weight: 500 !important;
+        transition: all 0.2s ease !important;
+    }
+    
+    .filter-actions .button-primary {
+        background: #2271b1 !important;
+        border-color: #2271b1 !important;
+    }
+    
+    .filter-actions .button-primary:hover {
+        background: #135e96 !important;
+        border-color: #135e96 !important;
+        transform: translateY(-1px) !important;
+    }
+    
+    .export-section {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 10px !important;
+        padding-left: 20px !important;
+        border-left: 2px solid #f0f0f1 !important;
+    }
+    
+    .btn-export-csv {
+        background: #00a32a !important;
+        border-color: #00a32a !important;
+        color: white !important;
+        border-radius: 8px !important;
+        padding: 8px 16px !important;
+        font-weight: 500 !important;
+        transition: all 0.2s ease !important;
+        text-decoration: none !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+    }
+    
+    .btn-export-csv:hover {
+        background: #008a20 !important;
+        border-color: #008a20 !important;
+        color: white !important;
+        transform: translateY(-1px) !important;
+        box-shadow: 0 4px 12px rgba(0,163,42,0.3) !important;
+    }
+    
+    .btn-export-pdf {
+        background: #d63638 !important;
+        border-color: #d63638 !important;
+        color: white !important;
+        border-radius: 8px !important;
+        padding: 8px 16px !important;
+        font-weight: 500 !important;
+        transition: all 0.2s ease !important;
+        text-decoration: none !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+    }
+    
+    .btn-export-pdf:hover {
+        background: #b32d2e !important;
+        border-color: #b32d2e !important;
+        color: white !important;
+        transform: translateY(-1px) !important;
+        box-shadow: 0 4px 12px rgba(214,54,56,0.3) !important;
+    }
+    
+    /* Table Card */
+    .table-card {
+        background: #fff !important;
+        border: none !important;
+        border-radius: 12px !important;
+        overflow: hidden !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06) !important;
+    }
+    
+    .table-card .wp-list-table {
+        border: none !important;
+        margin: 0 !important;
+    }
+    
+    .table-card .wp-list-table thead th {
+        background: #f8f9fa !important;
+        border-bottom: 2px solid #f0f0f1 !important;
+        padding: 14px 12px !important;
+        font-weight: 600 !important;
+        font-size: 12px !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.5px !important;
+        color: #50575e !important;
+    }
+    
+    .table-card .wp-list-table tbody td {
+        padding: 12px !important;
+        border-bottom: 1px solid #f0f0f1 !important;
+        vertical-align: middle !important;
+    }
+    
+    .table-card .wp-list-table tbody tr:last-child td {
+        border-bottom: none !important;
+    }
+    
+    .table-card .wp-list-table tbody tr:hover {
+        background: #f8f9fa !important;
+    }
+    
+    /* Severity badges - modern */
+    .severity-badge {
+        display: inline-block !important;
+        padding: 4px 12px !important;
+        border-radius: 20px !important;
+        font-size: 10px !important;
+        font-weight: 700 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.5px !important;
+        background: #f0f0f1 !important;
+        color: #50575e !important;
+        border: none !important;
+    }
+    
+    .severity-emergency { background: #dc3232 !important; color: #fff !important; }
+    .severity-alert { background: #f56e28 !important; color: #fff !important; }
+    .severity-critical { background: #d63638 !important; color: #fff !important; }
+    .severity-error { background: #e94f4f !important; color: #fff !important; }
+    .severity-warning { background: #f5a623 !important; color: #fff !important; }
+    .severity-notice { background: #00a0d2 !important; color: #fff !important; }
+    .severity-info { background: #2271b1 !important; color: #fff !important; }
+    .severity-debug { background: #a7aaad !important; color: #fff !important; }
+    
+    /* Log details styling */
+    .log-details {
+        font-size: 12px !important;
+        line-height: 1.5 !important;
+        max-height: 180px !important;
+        overflow-y: auto !important;
+        padding: 10px 12px !important;
+        background: #f8f9fa !important;
+        border-radius: 8px !important;
+        border-left: 3px solid #2271b1 !important;
+    }
+    
+    .detail-item {
+        margin-bottom: 4px !important;
+        padding-bottom: 4px !important;
+        border-bottom: 1px solid #f0f0f1 !important;
+    }
+    
+    .detail-item:last-child {
+        border-bottom: none !important;
+        margin-bottom: 0 !important;
+    }
+    
+    .detail-key {
+        font-weight: 600 !important;
+        color: #1d2327 !important;
+        background: #fff !important;
+        padding: 2px 8px !important;
+        border-radius: 4px !important;
+        border: 1px solid #e0e0e0 !important;
+        font-size: 11px !important;
+    }
+    
+    .change-old {
+        color: #d63638 !important;
+        background: #fcf0f1 !important;
+        padding: 1px 6px !important;
+        border-radius: 4px !important;
+        text-decoration: line-through !important;
+        margin-right: 4px !important;
+        font-size: 12px !important;
+    }
+    
+    .change-new {
+        color: #00a32a !important;
+        background: #f0f9f1 !important;
+        padding: 1px 6px !important;
+        border-radius: 4px !important;
+        font-weight: 600 !important;
+        font-size: 12px !important;
+    }
+    
+    .change-arrow {
+        color: #8c8f94 !important;
+        margin: 0 6px !important;
+        font-weight: bold !important;
+    }
+    
+    /* Pagination */
+    .tablenav.bottom {
+        background: #fff !important;
+        padding: 15px 20px !important;
+        border: none !important;
+        border-top: 1px solid #f0f0f1 !important;
+        border-radius: 0 0 12px 12px !important;
+        margin: 0 !important;
+    }
+    
+    .tablenav-pages .button {
+        border-radius: 6px !important;
+        padding: 4px 12px !important;
+        transition: all 0.2s ease !important;
+    }
+    
+    .tablenav-pages .button:hover {
+        background: #f0f0f1 !important;
+    }
+    
+    /* Responsive */
+    @media screen and (max-width: 782px) {
+        .summary-grid {
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 12px !important;
+        }
         
-        /* Log details styling */
-        .log-details {
-            font-size: 12px;
-            line-height: 1.4;
-            max-height: 150px;
-            overflow-y: auto;
-            padding: 8px;
-            background: #f8f9fa;
-            border-radius: 4px;
-            border-left: 3px solid #2271b1;
-        }
-        .detail-item {
-            margin-bottom: 6px;
-            padding-bottom: 6px;
-            border-bottom: 1px dashed #e0e0e0;
-        }
-        .detail-item:last-child {
-            border-bottom: none;
-            margin-bottom: 0;
-        }
-        .detail-key {
-            font-weight: 600;
-            color: #1d2327;
-            display: inline-block;
-            min-width: 120px;
-            background: #fff;
-            padding: 2px 6px;
-            border-radius: 3px;
-            border: 1px solid #dcdcde;
-        }
-        .change-old {
-            color: #d63638;
-            background: #fcf0f1;
-            padding: 1px 4px;
-            border-radius: 2px;
-            text-decoration: line-through;
-            margin-right: 4px;
-        }
-        .change-new {
-            color: #00a32a;
-            background: #f0f9f1;
-            padding: 1px 4px;
-            border-radius: 2px;
-            font-weight: 600;
-        }
-        .change-arrow {
-            color: #8c8f94;
-            margin: 0 8px;
-            font-weight: bold;
+        .filter-grid {
+            grid-template-columns: 1fr 1fr !important;
         }
         
-        /* HTML content styling */
-        .log-details .html-content {
-            background: #fff;
-            border: 1px solid #dcdcde;
-            border-radius: 4px;
-            padding: 15px;
-            margin-top: 5px;
-            max-width: 100%;
-            overflow-x: auto;
+        .filter-actions {
+            flex-direction: column !important;
+            align-items: stretch !important;
         }
         
-        /* ACF specific styling */
-        .log-details .html-content .acf-changes-summary,
-        .log-details .html-content .location-rules {
-            font-size: 13px;
-            line-height: 1.5;
+        .export-section {
+            border-left: none !important;
+            padding-left: 0 !important;
+            padding-top: 10px !important;
+            border-top: 1px solid #f0f0f1 !important;
         }
         
-        .log-details .html-content .change-item {
-            margin: 8px 0;
-            padding: 8px;
-            background: #f8f9fa;
-            border-radius: 4px;
-            border-left: 3px solid #2271b1;
-        }
-        
-        .log-details .html-content .change-label {
-            font-weight: 600;
-            color: #1d2327;
-            display: block;
-            margin-bottom: 5px;
-        }
-        
-        .log-details .html-content .change-old, 
-        .log-details .html-content .change-new {
-            padding: 2px 6px;
-            border-radius: 3px;
-            margin: 0 2px;
-        }
-        
-        .log-details .html-content .change-old {
-            background: #fcf0f1;
-            color: #d63638;
-            text-decoration: line-through;
-        }
-        
-        .log-details .html-content .change-new {
-            background: #f0f9f1;
-            color: #00a32a;
-            font-weight: 600;
-        }
-        
-        .log-details .html-content .change-arrow {
-            color: #8c8f94;
-            margin: 0 8px;
-            font-weight: bold;
-        }
-        
-        .log-details .html-content .field-changes-section {
-            margin-top: 15px;
-            border-top: 2px solid #f0f0f1;
-            padding-top: 15px;
-        }
-        
-        .log-details .html-content .field-changes-header {
-            font-weight: 600;
-            color: #1d2327;
-            margin-bottom: 10px;
-            font-size: 14px;
-        }
-        
-        .log-details .html-content .field-change-group {
-            margin: 10px 0;
-            padding: 10px;
-            border-radius: 5px;
-        }
-        
-        .log-details .html-content .modified-fields {
-            background: #fff9e6;
-            border: 1px solid #ffecb5;
-        }
-        
-        .log-details .html-content .field-group-header {
-            font-weight: 600;
-            margin-bottom: 8px;
-            padding-bottom: 5px;
-            border-bottom: 1px dashed #ddd;
-            color: #664d03;
-        }
-        
-        .log-details .html-content .field-item {
-            margin: 8px 0;
-            padding: 8px 10px;
-            background: #fff;
-            border-radius: 4px;
-            border-left: 4px solid #2271b1;
-        }
-        
-        .log-details .html-content .modified-field {
-            border-left-color: #dba617;
-        }
-        
-        .log-details .html-content .field-meta {
-            font-size: 11px;
-            color: #646970;
-            font-family: monospace;
-            margin-left: 8px;
-        }
-        
-        .log-details .html-content .field-modifications {
-            margin-top: 8px;
-            padding-top: 8px;
-            border-top: 1px dashed #e0e0e0;
-        }
-        
-        .log-details .html-content .field-modification {
-            margin: 4px 0;
-            padding: 4px 8px;
-            background: #f8f9fa;
-            border-radius: 3px;
-            font-size: 12px;
-        }
-        
-        .log-details .html-content .mod-prop {
-            font-weight: 600;
-            color: #50575e;
-            display: inline-block;
-            min-width: 120px;
-        }
-        
-        .log-details .html-content .mod-old, 
-        .log-details .html-content .mod-new {
-            padding: 1px 4px;
-            border-radius: 2px;
-            margin: 0 4px;
-        }
-        
-        .log-details .html-content .mod-old {
-            background: #ffe2e3;
-            color: #d63638;
-        }
-        
-        .log-details .html-content .mod-new {
-            background: #cce8d1;
-            color: #00a32a;
-        }
-        
-        .log-details .html-content .location-rules {
-            background: #f6f7f7;
-            padding: 10px;
-            border-radius: 4px;
-            border: 1px solid #dcdcde;
-        }
-        
-        .log-details .html-content .location-group {
-            margin: 5px 0;
-            padding: 8px;
-            background: #fff;
-            border-radius: 3px;
-            border-left: 3px solid #2271b1;
-        }
-        
-        .log-details .html-content .location-group code {
-            background: #f0f0f1;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-family: monospace;
-            color: #50575e;
-        }
-        
-        /* Action links styling */
-        .action-links {
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 2px solid #e0e0e0;
-        }
-        
-        .action-links a {
-            display: inline-block;
-            margin-right: 10px;
-            padding: 3px 8px;
-            background: #2271b1;
-            color: white;
-            text-decoration: none;
-            border-radius: 3px;
-            font-size: 11px;
-        }
-        
-        .action-links a:hover {
-            background: #135e96;
-        }
-        
-        /* Make table more readable */
-        .wp-list-table th {
-            font-weight: 600;
-            background: #f6f7f7;
-        }
-        .wp-list-table tr:hover {
-            background: #f6f7f7 !important;
-        }
-        
-        /* Pagination styling */
         .tablenav.bottom {
-            background: #fff;
-            padding: 15px;
-            border: 1px solid #ccd0d4;
-            border-radius: 4px;
-            border-top: none;
-            border-top-left-radius: 0;
-            border-top-right-radius: 0;
+            flex-direction: column !important;
+            gap: 10px !important;
         }
-        
-        .tablenav-pages a.button {
-            display: inline-block;
-            padding: 3px 8px;
-            min-width: 30px;
-            height: 28px;
-            line-height: 20px;
-            text-align: center;
-            text-decoration: none;
+    }
+    
+    @media screen and (max-width: 480px) {
+        .filter-grid {
+            grid-template-columns: 1fr !important;
         }
-        
-        .tablenav-pages-navspan.button.disabled {
-            display: inline-block;
-            padding: 3px 8px;
-            min-width: 30px;
-            height: 28px;
-            line-height: 20px;
-            text-align: center;
-            background: #f6f7f7;
-            color: #a7aaad;
-            border-color: #dcdcde;
-            cursor: default;
-        }
-        
-        .paging-input input.current-page {
-            padding: 3px 5px;
-            border: 1px solid #8c8f94;
-            border-radius: 3px;
-        }
-        
-        /* Responsive table */
-        @media screen and (max-width: 1200px) {
-            .wp-list-table {
-                display: block;
+    }
+    
+    /* Scrollbar styling */
+    .log-details::-webkit-scrollbar {
+        width: 4px !important;
+    }
+    
+    .log-details::-webkit-scrollbar-track {
+        background: #f0f0f1 !important;
+        border-radius: 4px !important;
+    }
+    
+    .log-details::-webkit-scrollbar-thumb {
+        background: #dcdcde !important;
+        border-radius: 4px !important;
+    }
+    
+    .log-details::-webkit-scrollbar-thumb:hover {
+        background: #a7aaad !important;
+    }
+</style>
+
+        <!-- <style>
+            .severity-emergency {
+                background: #dc3232 !important;
+                color: white !important;
+            }
+
+            .severity-alert {
+                background: #f56e28 !important;
+                color: white !important;
+            }
+
+            .severity-critical {
+                background: #d63638 !important;
+                color: white !important;
+            }
+
+            .severity-error {
+                background: #ff0000 !important;
+                color: white !important;
+            }
+
+            .severity-warning {
+                background: #ffb900 !important;
+                color: #000 !important;
+            }
+
+            .severity-notice {
+                background: #00a0d2 !important;
+                color: white !important;
+            }
+
+            .severity-info {
+                background: #2271b1 !important;
+                color: white !important;
+            }
+
+            .severity-debug {
+                background: #a7aaad !important;
+                color: #000 !important;
+            }
+
+            /* Log details styling */
+            .log-details {
+                font-size: 12px;
+                line-height: 1.4;
+                max-height: 150px;
+                overflow-y: auto;
+                padding: 8px;
+                background: #f8f9fa;
+                border-radius: 4px;
+                border-left: 3px solid #2271b1;
+            }
+
+            .detail-item {
+                margin-bottom: 6px;
+                padding-bottom: 6px;
+                border-bottom: 1px dashed #e0e0e0;
+            }
+
+            .detail-item:last-child {
+                border-bottom: none;
+                margin-bottom: 0;
+            }
+
+            .detail-key {
+                font-weight: 600;
+                color: #1d2327;
+                display: inline-block;
+                min-width: 120px;
+                background: #fff;
+                padding: 2px 6px;
+                border-radius: 3px;
+                border: 1px solid #dcdcde;
+            }
+
+            .change-old {
+                color: #d63638;
+                background: #fcf0f1;
+                padding: 1px 4px;
+                border-radius: 2px;
+                text-decoration: line-through;
+                margin-right: 4px;
+            }
+
+            .change-new {
+                color: #00a32a;
+                background: #f0f9f1;
+                padding: 1px 4px;
+                border-radius: 2px;
+                font-weight: 600;
+            }
+
+            .change-arrow {
+                color: #8c8f94;
+                margin: 0 8px;
+                font-weight: bold;
+            }
+
+            /* HTML content styling */
+            .log-details .html-content {
+                background: #fff;
+                border: 1px solid #dcdcde;
+                border-radius: 4px;
+                padding: 15px;
+                margin-top: 5px;
+                max-width: 100%;
                 overflow-x: auto;
-                white-space: nowrap;
             }
-        }
-        
-        /* Mobile responsive */
-        @media screen and (max-width: 782px) {
+
+            /* ACF specific styling */
+            .log-details .html-content .acf-changes-summary,
+            .log-details .html-content .location-rules {
+                font-size: 13px;
+                line-height: 1.5;
+            }
+
+            .log-details .html-content .change-item {
+                margin: 8px 0;
+                padding: 8px;
+                background: #f8f9fa;
+                border-radius: 4px;
+                border-left: 3px solid #2271b1;
+            }
+
+            .log-details .html-content .change-label {
+                font-weight: 600;
+                color: #1d2327;
+                display: block;
+                margin-bottom: 5px;
+            }
+
+            .log-details .html-content .change-old,
+            .log-details .html-content .change-new {
+                padding: 2px 6px;
+                border-radius: 3px;
+                margin: 0 2px;
+            }
+
+            .log-details .html-content .change-old {
+                background: #fcf0f1;
+                color: #d63638;
+                text-decoration: line-through;
+            }
+
+            .log-details .html-content .change-new {
+                background: #f0f9f1;
+                color: #00a32a;
+                font-weight: 600;
+            }
+
+            .log-details .html-content .change-arrow {
+                color: #8c8f94;
+                margin: 0 8px;
+                font-weight: bold;
+            }
+
+            .log-details .html-content .field-changes-section {
+                margin-top: 15px;
+                border-top: 2px solid #f0f0f1;
+                padding-top: 15px;
+            }
+
+            .log-details .html-content .field-changes-header {
+                font-weight: 600;
+                color: #1d2327;
+                margin-bottom: 10px;
+                font-size: 14px;
+            }
+
+            .log-details .html-content .field-change-group {
+                margin: 10px 0;
+                padding: 10px;
+                border-radius: 5px;
+            }
+
+            .log-details .html-content .modified-fields {
+                background: #fff9e6;
+                border: 1px solid #ffecb5;
+            }
+
+            .log-details .html-content .field-group-header {
+                font-weight: 600;
+                margin-bottom: 8px;
+                padding-bottom: 5px;
+                border-bottom: 1px dashed #ddd;
+                color: #664d03;
+            }
+
+            .log-details .html-content .field-item {
+                margin: 8px 0;
+                padding: 8px 10px;
+                background: #fff;
+                border-radius: 4px;
+                border-left: 4px solid #2271b1;
+            }
+
+            .log-details .html-content .modified-field {
+                border-left-color: #dba617;
+            }
+
+            .log-details .html-content .field-meta {
+                font-size: 11px;
+                color: #646970;
+                font-family: monospace;
+                margin-left: 8px;
+            }
+
+            .log-details .html-content .field-modifications {
+                margin-top: 8px;
+                padding-top: 8px;
+                border-top: 1px dashed #e0e0e0;
+            }
+
+            .log-details .html-content .field-modification {
+                margin: 4px 0;
+                padding: 4px 8px;
+                background: #f8f9fa;
+                border-radius: 3px;
+                font-size: 12px;
+            }
+
+            .log-details .html-content .mod-prop {
+                font-weight: 600;
+                color: #50575e;
+                display: inline-block;
+                min-width: 120px;
+            }
+
+            .log-details .html-content .mod-old,
+            .log-details .html-content .mod-new {
+                padding: 1px 4px;
+                border-radius: 2px;
+                margin: 0 4px;
+            }
+
+            .log-details .html-content .mod-old {
+                background: #ffe2e3;
+                color: #d63638;
+            }
+
+            .log-details .html-content .mod-new {
+                background: #cce8d1;
+                color: #00a32a;
+            }
+
+            .log-details .html-content .location-rules {
+                background: #f6f7f7;
+                padding: 10px;
+                border-radius: 4px;
+                border: 1px solid #dcdcde;
+            }
+
+            .log-details .html-content .location-group {
+                margin: 5px 0;
+                padding: 8px;
+                background: #fff;
+                border-radius: 3px;
+                border-left: 3px solid #2271b1;
+            }
+
+            .log-details .html-content .location-group code {
+                background: #f0f0f1;
+                padding: 2px 6px;
+                border-radius: 3px;
+                font-family: monospace;
+                color: #50575e;
+            }
+
+            /* Action links styling */
+            .action-links {
+                margin-top: 10px;
+                padding-top: 10px;
+                border-top: 2px solid #e0e0e0;
+            }
+
+            .action-links a {
+                display: inline-block;
+                margin-right: 10px;
+                padding: 3px 8px;
+                background: #2271b1;
+                color: white;
+                text-decoration: none;
+                border-radius: 3px;
+                font-size: 11px;
+            }
+
+            .action-links a:hover {
+                background: #135e96;
+            }
+
+            /* Make table more readable */
+            .wp-list-table th {
+                font-weight: 600;
+                background: #f6f7f7;
+            }
+
+            .wp-list-table tr:hover {
+                background: #f6f7f7 !important;
+            }
+
+            /* Pagination styling */
             .tablenav.bottom {
-                flex-direction: column;
-                gap: 15px;
+                background: #fff;
+                padding: 15px;
+                border: 1px solid #ccd0d4;
+                border-radius: 4px;
+                border-top: none;
+                border-top-left-radius: 0;
+                border-top-right-radius: 0;
             }
-            
-            .tablenav-pages {
-                width: 100%;
-                justify-content: center;
+
+            .tablenav-pages a.button {
+                display: inline-block;
+                padding: 3px 8px;
+                min-width: 30px;
+                height: 28px;
+                line-height: 20px;
+                text-align: center;
+                text-decoration: none;
             }
-            
-            .tablenav-pages .pagination-links {
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                flex-wrap: wrap;
-                gap: 5px;
+
+            .tablenav-pages-navspan.button.disabled {
+                display: inline-block;
+                padding: 3px 8px;
+                min-width: 30px;
+                height: 28px;
+                line-height: 20px;
+                text-align: center;
+                background: #f6f7f7;
+                color: #a7aaad;
+                border-color: #dcdcde;
+                cursor: default;
             }
-        }
-        </style>
 
-<script>
-     jQuery(document).ready(function($) {
-        // Add this inside your jQuery(document).ready() function
-$('button[name="reset_filters"]').on('click', function(e) {
-    e.preventDefault();
-    var form = $(this).closest('form');
-    form.find('select').val('');
-    form.find('input[type="text"], input[type="date"], input[type="number"]').val('');
-    form.find('input[name="user_id"]').val(0);
-    form.find('input[name="paged"]').val(1);
-    
-    // Submit the reset
-    form.submit();
-});
+            .paging-input input.current-page {
+                padding: 3px 5px;
+                border: 1px solid #8c8f94;
+                border-radius: 3px;
+            }
 
-// Handle export button clicks - simple version
-$(document).on('click', 'a.button[href*="export_type"]', function(e) {
-    var $button = $(this);
-    
-    // Store original state
-    var originalHtml = $button.html();
-    
-    // Show loading state
-    $button.html('<span class="spinner is-active" style="float: none; margin: 0 5px 0 0;"></span> ' + $button.text());
-    $button.addClass('disabled').css('pointer-events', 'none');
-    
-});
-        });
-</script>
+            /* Responsive table */
+            @media screen and (max-width: 1200px) {
+                .wp-list-table {
+                    display: block;
+                    overflow-x: auto;
+                    white-space: nowrap;
+                }
+            }
 
-    <?php
-}
+            /* Mobile responsive */
+            @media screen and (max-width: 782px) {
+                .tablenav.bottom {
+                    flex-direction: column;
+                    gap: 15px;
+                }
+
+                .tablenav-pages {
+                    width: 100%;
+                    justify-content: center;
+                }
+
+                .tablenav-pages .pagination-links {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    flex-wrap: wrap;
+                    gap: 5px;
+                }
+            }
+        </style> -->
+
+        <script>
+            jQuery(document).ready(function ($) {
+                // Add this inside your jQuery(document).ready() function
+                $('button[name="reset_filters"]').on('click', function (e) {
+                    e.preventDefault();
+                    var form = $(this).closest('form');
+                    form.find('select').val('');
+                    form.find('input[type="text"], input[type="date"], input[type="number"]').val('');
+                    form.find('input[name="user_id"]').val(0);
+                    form.find('input[name="paged"]').val(1);
+
+                    // Submit the reset
+                    form.submit();
+                });
+
+                // Handle export button clicks - simple version
+                $(document).on('click', 'a.button[href*="export_type"]', function (e) {
+                    var $button = $(this);
+
+                    // Store original state
+                    var originalHtml = $button.html();
+
+                    // Show loading state
+                    $button.html('<span class="spinner is-active" style="float: none; margin: 0 5px 0 0;"></span> ' + $button.text());
+                    $button.addClass('disabled').css('pointer-events', 'none');
+
+                });
+            });
+        </script>
+
+        <?php
+    }
 
     /**
      * Format action for display
      */
-    public static function format_action($action) {
+    public static function format_action($action)
+    {
         $actions = [
             'post_created' => '📝 Post Created',
             'post_updated' => '✏️ Post Updated',
@@ -1431,14 +1914,15 @@ $(document).on('click', 'a.button[href*="export_type"]', function(e) {
             'customizer_saved' => '🎨 Customizer Saved',
             'login_failed' => '🔒 Login Failed',
         ];
-        
+
         return $actions[$action] ?? ucwords(str_replace('_', ' ', $action));
     }
-    
+
     /**
      * Get object display text
      */
-    public static function get_object_display_text($log) {
+    public static function get_object_display_text($log)
+    {
         if ($log->object_id > 0) {
             if ($log->object_type === 'post') {
                 return 'Post #' . $log->object_id . ' - ' . $log->object_name;
@@ -1453,11 +1937,12 @@ $(document).on('click', 'a.button[href*="export_type"]', function(e) {
             return $log->object_name ?: ucfirst($log->object_type ?: 'System');
         }
     }
-    
+
     /**
      * Format details for display with HTML support
      */
-    private static function format_details_display($details) {
+    private static function format_details_display($details)
+    {
         if (empty($details) || !is_array($details)) {
             return '<em>' . __('No details', 'site-logger') . '</em>';
         }
@@ -1528,31 +2013,71 @@ $(document).on('click', 'a.button[href*="export_type"]', function(e) {
         return $output;
     }
 
-    
+    /**
+     * Clear all logs from the database
+     */
+    public static function clear_all_logs()
+    {
+        global $wpdb;
+        $table_name = $wpdb->prefix . self::TABLE_NAME;
+        
+        // Delete all records
+        $result = $wpdb->query("TRUNCATE TABLE $table_name");
+        
+        if ($result !== false) {
+            // Optimize table after truncation
+            $wpdb->query("OPTIMIZE TABLE $table_name");
+            return true;
+        }
+        
+        return false;
+    }
+
+
     /**
      * Render settings page
      */
-    public static function render_settings_page() {
+    public static function render_settings_page()
+    {
+        // Handle clear logs request
+        if (
+            isset($_POST['site_logger_clear_logs']) &&
+            isset($_POST['site_logger_clear_nonce']) &&
+            wp_verify_nonce($_POST['site_logger_clear_nonce'], 'site_logger_clear_action')
+        ) {
+            if (self::clear_all_logs()) {
+                echo '<div class="notice notice-success is-dismissible"><p>' . 
+                    __('All logs have been cleared successfully.', 'site-logger') . 
+                    '</p></div>';
+            } else {
+                echo '<div class="notice notice-error is-dismissible"><p>' . 
+                    __('Failed to clear logs. Please try again.', 'site-logger') . 
+                    '</p></div>';
+            }
+        }
+
         // Save settings if form submitted
-        if (isset($_POST['site_logger_save_settings']) 
-            && wp_verify_nonce($_POST['site_logger_settings_nonce'], 'site_logger_save_settings')) {
-            
+        if (
+            isset($_POST['site_logger_save_settings'])
+            && wp_verify_nonce($_POST['site_logger_settings_nonce'], 'site_logger_save_settings')
+        ) {
+
             update_option('site_logger_severity_level', sanitize_text_field($_POST['severity_level']));
             update_option('site_logger_retention_days', intval($_POST['retention_days']));
             update_option('site_logger_skip_cron', sanitize_text_field($_POST['skip_cron']));
             update_option('site_logger_log_ip', isset($_POST['log_ip']) ? 'yes' : 'no');
             update_option('site_logger_log_user_id', isset($_POST['log_user_id']) ? 'yes' : 'no');
-            
+
             echo '<div class="notice notice-success is-dismissible"><p>' . __('Settings saved successfully.', 'site-logger') . '</p></div>';
         }
-        
+
         ?>
         <div class="wrap">
             <h1><?php _e('Site Logger Settings', 'site-logger'); ?></h1>
-            
+
             <form method="post" action="">
                 <?php wp_nonce_field('site_logger_save_settings', 'site_logger_settings_nonce'); ?>
-                
+
                 <h2><?php _e('Logging Settings', 'site-logger'); ?></h2>
                 <table class="form-table">
                     <tr>
@@ -1562,8 +2087,7 @@ $(document).on('click', 'a.button[href*="export_type"]', function(e) {
                         <td>
                             <select name="severity_level" id="severity_level" class="regular-text">
                                 <?php foreach (self::SEVERITY_LEVELS as $level): ?>
-                                    <option value="<?php echo esc_attr($level); ?>" 
-                                            <?php selected(get_option('site_logger_severity_level', 'info'), $level); ?>>
+                                    <option value="<?php echo esc_attr($level); ?>" <?php selected(get_option('site_logger_severity_level', 'info'), $level); ?>>
                                         <?php echo esc_html(ucfirst($level)); ?>
                                     </option>
                                 <?php endforeach; ?>
@@ -1573,22 +2097,22 @@ $(document).on('click', 'a.button[href*="export_type"]', function(e) {
                             </p>
                         </td>
                     </tr>
-                    
+
                     <tr>
                         <th scope="row">
                             <label for="retention_days"><?php _e('Log Retention', 'site-logger'); ?></label>
                         </th>
                         <td>
-                            <input type="number" name="retention_days" id="retention_days" 
-                                   value="<?php echo esc_attr(get_option('site_logger_retention_days', 30)); ?>"
-                                   min="1" max="3650" step="1" class="small-text">
+                            <input type="number" name="retention_days" id="retention_days"
+                                value="<?php echo esc_attr(get_option('site_logger_retention_days', 30)); ?>" min="1" max="3650"
+                                step="1" class="small-text">
                             <?php _e('days', 'site-logger'); ?>
                             <p class="description">
                                 <?php _e('How long to keep log entries before automatic deletion.', 'site-logger'); ?>
                             </p>
                         </td>
                     </tr>
-                    
+
                     <tr>
                         <th scope="row">
                             <label for="skip_cron"><?php _e('Skip Cron Logs', 'site-logger'); ?></label>
@@ -1607,15 +2131,14 @@ $(document).on('click', 'a.button[href*="export_type"]', function(e) {
                             </p>
                         </td>
                     </tr>
-                    
+
                     <tr>
                         <th scope="row">
                             <label for="log_ip"><?php _e('Log IP Addresses', 'site-logger'); ?></label>
                         </th>
                         <td>
                             <label>
-                                <input type="checkbox" name="log_ip" id="log_ip" value="yes" 
-                                       <?php checked(get_option('site_logger_log_ip', 'yes'), 'yes'); ?>>
+                                <input type="checkbox" name="log_ip" id="log_ip" value="yes" <?php checked(get_option('site_logger_log_ip', 'yes'), 'yes'); ?>>
                                 <?php _e('Log user IP addresses', 'site-logger'); ?>
                             </label>
                             <p class="description">
@@ -1623,15 +2146,14 @@ $(document).on('click', 'a.button[href*="export_type"]', function(e) {
                             </p>
                         </td>
                     </tr>
-                    
+
                     <tr>
                         <th scope="row">
                             <label for="log_user_id"><?php _e('Log User IDs', 'site-logger'); ?></label>
                         </th>
                         <td>
                             <label>
-                                <input type="checkbox" name="log_user_id" id="log_user_id" value="yes" 
-                                       <?php checked(get_option('site_logger_log_user_id', 'yes'), 'yes'); ?>>
+                                <input type="checkbox" name="log_user_id" id="log_user_id" value="yes" <?php checked(get_option('site_logger_log_user_id', 'yes'), 'yes'); ?>>
                                 <?php _e('Log user IDs', 'site-logger'); ?>
                             </label>
                             <p class="description">
@@ -1640,14 +2162,14 @@ $(document).on('click', 'a.button[href*="export_type"]', function(e) {
                         </td>
                     </tr>
                 </table>
-                
+
                 <p class="submit">
                     <button type="submit" name="site_logger_save_settings" class="button button-primary">
                         <?php _e('Save Settings', 'site-logger'); ?>
                     </button>
                 </p>
             </form>
-            
+
             <!-- Database Stats -->
             <div class="card" style="margin-top: 30px;">
                 <h2 class="title"><?php _e('Database Information', 'site-logger'); ?></h2>
@@ -1688,7 +2210,45 @@ $(document).on('click', 'a.button[href*="export_type"]', function(e) {
                     </tr>
                 </table>
             </div>
-            
+
+            <!-- Clear Logs Section -->
+            <div class="card" style="margin-top: 30px; border-left: 4px solid #d63638;">
+                <p style="color: #d63638; margin-bottom: 15px;">
+                    <strong><?php _e('Warning:', 'site-logger'); ?></strong> 
+                    <?php _e('This action will permanently delete all activity logs from the database. This action cannot be undone.', 'site-logger'); ?>
+                </p>
+                
+                <?php
+                global $wpdb;
+                $table_name = $wpdb->prefix . Site_Logger::TABLE_NAME;
+                $total_logs = $wpdb->get_var("SELECT COUNT(*) FROM $table_name");
+                ?>
+                <p>
+                    <?php printf(
+                        __('Currently there are <strong>%s</strong> log entries in the database.', 'site-logger'),
+                        number_format($total_logs)
+                    ); ?>
+                </p>
+                
+                <form method="post" action="" onsubmit="return confirmClearLogs();">
+                    <?php wp_nonce_field('site_logger_clear_action', 'site_logger_clear_nonce'); ?>
+                    <input type="hidden" name="site_logger_clear_logs" value="1">
+                    <button type="submit" class="button button-link-delete" 
+                            style="color: #d63638; border-color: #d63638; background: #fff;">
+                        <?php _e('🗑️ Clear All Logs', 'site-logger'); ?>
+                    </button>
+                    <span style="margin-left: 10px; color: #666; font-size: 12px;">
+                        <?php _e('This will delete all log entries permanently.', 'site-logger'); ?>
+                    </span>
+                </form>
+                
+                <script>
+                    function confirmClearLogs() {
+                        return confirm('<?php _e('⚠️ Are you sure you want to delete ALL activity logs? This action cannot be undone!', 'site-logger'); ?>');
+                    }
+                </script>
+            </div>
+
             <!-- System Information -->
             <div class="card" style="margin-top: 30px;">
                 <h2 class="title"><?php _e('System Information', 'site-logger'); ?></h2>
@@ -1718,11 +2278,12 @@ $(document).on('click', 'a.button[href*="export_type"]', function(e) {
         </div>
         <?php
     }
-    
+
     /**
      * Beautiful rendering of content change details
      */
-    private static function render_beautiful_content_changes($data) {
+    private static function render_beautiful_content_changes($data)
+    {
         $output = '<div class="content-change-box">';
 
         // Summary line
@@ -1797,59 +2358,62 @@ $(document).on('click', 'a.button[href*="export_type"]', function(e) {
     /**
      * Handle POST filter requests early
      */
-    public static function handle_post_requests() {
+    public static function handle_post_requests()
+    {
         if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !isset($_POST['site_logger_filter'])) {
             return;
         }
-        
+
         // Verify nonce
-        if (!isset($_POST['site_logger_filter_nonce']) || 
-            !wp_verify_nonce($_POST['site_logger_filter_nonce'], 'site_logger_filter')) {
+        if (
+            !isset($_POST['site_logger_filter_nonce']) ||
+            !wp_verify_nonce($_POST['site_logger_filter_nonce'], 'site_logger_filter')
+        ) {
             wp_die('Security check failed');
         }
-        
+
         // Check if reset button was clicked
         if (isset($_POST['reset_filters'])) {
             // Clear all stored filters
             delete_transient('site_logger_current_filters_' . get_current_user_id());
             delete_transient('site_logger_current_per_page_' . get_current_user_id());
-            
+
             // Redirect to clean URL WITHOUT filtered=1
             wp_safe_redirect(admin_url('admin.php?page=site-logs&reset=1'));
             exit;
         }
-        
+
         // Collect filters from POST
         $filters = [];
         $filter_keys = ['severity', 'user_id', 'action', 'object_type', 'date_from', 'date_to', 'search'];
-        
+
         foreach ($filter_keys as $key) {
             if (!empty($_POST[$key])) {
                 $filters[$key] = sanitize_text_field($_POST[$key]);
             }
         }
-        
+
         $per_page = get_option('posts_per_page', 10);
         if (!empty($_POST['per_page'])) {
             $per_page = intval($_POST['per_page']);
         }
-        
+
         // Store filters in session/transient for pagination
         set_transient('site_logger_current_filters_' . get_current_user_id(), $filters, HOUR_IN_SECONDS);
         set_transient('site_logger_current_per_page_' . get_current_user_id(), $per_page, HOUR_IN_SECONDS);
-        
+
         // Preserve current page if set
         $paged = 1;
         if (!empty($_POST['paged'])) {
             $paged = intval($_POST['paged']);
         }
-        
+
         // Redirect with filtered=1 ONLY for apply_filters, NOT for reset
         $redirect_args = ['page' => 'site-logs', 'filtered' => '1'];
         if ($paged > 1) {
             $redirect_args['paged'] = $paged;
         }
-        
+
         wp_safe_redirect(add_query_arg($redirect_args, admin_url('admin.php')));
         exit;
     }

@@ -1,10 +1,11 @@
 <?php
 /**
- * Plugin Name: Site Logger
- * Plugin URI: https://github.com/iamshimantadas/site-logger
- * Description: Minimal activity logger for WordPress
+ * Plugin Name: TE Site Logger
+ * Plugin URI: 
+ * Description: Activity logger for wordpress. Log post update, user update, login of user, media actions etc.  
  * Version: 1.0.0
- * Author: Shimanta Das
+ * Author: Shimanta Das(TE)
+ * Author URI:  https://techievolve.com/
  * License: GPL v2 or later
  * Text Domain: site-logger
  */
@@ -24,10 +25,9 @@ define('SITE_LOGGER_PLUGIN_BASENAME', plugin_basename(__FILE__));
 require_once SITE_LOGGER_PLUGIN_DIR . 'includes/class-site-logger.php';
 require_once SITE_LOGGER_PLUGIN_DIR . 'includes/class-site-logger-hooks.php';
 require_once SITE_LOGGER_PLUGIN_DIR . 'includes/class-site-logger-export.php';
-// require_once SITE_LOGGER_PLUGIN_DIR . 'includes/class-site-logger-acf-tracker.php';
 
 // Initialize plugin
-add_action('plugins_loaded', function() {
+add_action('plugins_loaded', function () {
     Site_Logger::init();
 });
 
@@ -38,7 +38,7 @@ register_activation_hook(__FILE__, ['Site_Logger', 'activate']);
 register_deactivation_hook(__FILE__, ['Site_Logger', 'deactivate']);
 
 // Handle export requests early
-add_action('admin_init', function() {
+add_action('admin_init', function () {
     if (isset($_GET['page']) && $_GET['page'] === 'site-logs' && isset($_GET['export_type'])) {
         Site_Logger_Export::handle_export_request();
     }
